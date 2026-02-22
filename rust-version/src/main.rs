@@ -1,6 +1,6 @@
 use eframe::egui;
 use rfd::FileDialog;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::thread;
 
 mod converters;
@@ -80,14 +80,15 @@ impl eframe::App for CubeConvertApp {
             ui.add_space(16.0);
 
             ui.horizontal(|ui| {
-                if ui.button("\U0001F4C4 Select File").clicked() {
+                // Fixed Unicode string literal escapes
+                if ui.button("\u{1F4C4} Select File").clicked() {
                     if let Some(path) = FileDialog::new().add_filter("PDF", &["pdf"]).pick_file() {
                         self.selected_path = Some(path);
                         self.is_folder = false;
                         self.status_msg.clear();
                     }
                 }
-                if ui.button("\U0001F4C1 Select Folder").clicked() {
+                if ui.button("\u{1F4C1} Select Folder").clicked() {
                     if let Some(path) = FileDialog::new().pick_folder() {
                         self.selected_path = Some(path);
                         self.is_folder = true;

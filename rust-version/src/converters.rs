@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use image::{imageops, GenericImage, GenericImageView, RgbImage};
+use image::{imageops, RgbImage};
 use imageproc::drawing::draw_text_mut;
 use rusttype::{Font, Scale};
 
@@ -267,7 +267,7 @@ pub fn convert_clouds(file_path: &Path, is_folder: bool) -> Result<(), String> {
         for &page_id in doc.page_iter() {
             if let Ok(lopdf::Object::Dictionary(d)) = doc.get_object(page_id) {
                 if let Ok(res) = d.get(b"Resources") {
-                    if let (Ok(xobjs_obj)) = res.as_dict().and_then(|r| r.get(b"XObject")) {
+                    if let Ok(xobjs_obj) = res.as_dict().and_then(|r| r.get(b"XObject")) {
                         if let Ok(xobjs) = xobjs_obj.as_dict() {
                             for (_, v) in xobjs.iter() {
                                 if let Ok(ref_id) = v.as_reference() {
@@ -330,11 +330,12 @@ pub fn convert_clouds(file_path: &Path, is_folder: bool) -> Result<(), String> {
             let stdin = child.stdin.as_mut().unwrap();
             for fi in 0..total_frames {
                 let x = ((fi as f64 * scroll) as u32).min(total_w - w);
-                let view = strip.view(x, 0, w, h);
+                
+                // Manually write out crop instead of using unsupported .view()
                 let raw: Vec<u8> = (0..h)
                     .flat_map(|y| {
                         (0..w).flat_map(move |x2| {
-                            let p = view.get_pixel(x2, y);
+                            let p = strip.get_pixel(x + x2, y);
                             [p[0], p[1], p[2]]
                         })
                     })
@@ -472,7 +473,8 @@ pub fn convert_text(file_path: &Path, is_folder: bool, color: [u8; 3]) -> Result
                 if let Some(prev) = last {
                     w += font.pair_kerning(scale, prev, g.id());
                 }
-                w += g.scaled(scale).h_metrics().advance_width;
+                // Fix borrow of moved value: must call .clone()
+                w += g.clone().scaled(scale).h_metrics().advance_width;
                 last = Some(g.id());
             }
             w
