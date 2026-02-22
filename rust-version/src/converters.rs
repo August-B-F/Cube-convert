@@ -329,17 +329,23 @@ pub fn convert_clouds(file_path: &Path, is_folder: bool) -> Result<(), String> {
 
         {
             let stdin = child.stdin.as_mut().unwrap();
+            let mut raw: Vec<u8> = vec![0; (w * h * 3) as usize];
+            
             for fi in 0..total_frames {
                 let x = ((fi as f64 * scroll) as u32).min(total_w - w);
                 
-                let raw: Vec<u8> = (0..h)
-                    .flat_map(|y| {
-                        (0..w).flat_map(|x2| { // Fix E0507/E0382: removed `move` here
-                            let p = strip.get_pixel(x + x2, y);
-                            [p[0], p[1], p[2]]
-                        })
-                    })
-                    .collect();
+                // Fix borrow and closure lifetime issues using simple nested loops
+                let mut idx = 0;
+                for y in 0..h {
+                    for x2 in 0..w {
+                        let p = strip.get_pixel(x + x2, y);
+                        raw[idx] = p[0];
+                        raw[idx + 1] = p[1];
+                        raw[idx + 2] = p[2];
+                        idx += 3;
+                    }
+                }
+                
                 stdin.write_all(&raw).map_err(|e| e.to_string())?;
             }
         }
