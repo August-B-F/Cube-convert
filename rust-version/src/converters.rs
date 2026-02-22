@@ -334,7 +334,7 @@ pub fn convert_clouds(file_path: &Path, is_folder: bool) -> Result<(), String> {
                 
                 let raw: Vec<u8> = (0..h)
                     .flat_map(|y| {
-                        (0..w).flat_map(move |x2| {
+                        (0..w).flat_map(|x2| { // Fix E0507/E0382: removed `move` here
                             let p = strip.get_pixel(x + x2, y);
                             [p[0], p[1], p[2]]
                         })
