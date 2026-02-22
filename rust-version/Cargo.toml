@@ -1,0 +1,14 @@
+[package]
+name = "cube_convert_rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = "0.27"
+egui = "0.27"
+rfd = "0.14"
+hound = "3.5"
+pdf-extract = "0.7"
+lopdf = "0.31"
+crossbeam-channel = "0.5"
+color-hex = "0.2"
