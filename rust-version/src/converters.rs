@@ -60,13 +60,19 @@ pub fn convert_wind(file_path: &Path, is_folder: bool) -> Result<(), String> {
         let mut wind_intensities: Vec<Vec<f32>> = Vec::new();
 
         for line in text.split('\n') {
-            let day: Vec<f32> = line
+            // Match Python: strip first 2 chars (e.g. page number prefix) then split by comma
+            let stripped = if line.len() > 2 { &line[2..] } else { line };
+            let day: Vec<f32> = stripped
                 .split(',')
                 .filter_map(|s| s.trim().parse::<f32>().ok())
                 .collect();
             if !day.is_empty() {
                 wind_intensities.push(day);
             }
+        }
+
+        if wind_intensities.is_empty() {
+            return Err("No wind intensity data found in PDF".into());
         }
 
         if wind_intensities.len() >= 25 {
@@ -171,7 +177,7 @@ pub fn convert_bpm(file_path: &Path, is_folder: bool) -> Result<(), String> {
             }
         }
         if bpm_list.is_empty() {
-            return Ok(());
+            return Err("No BPM data found in PDF".into());
         }
 
         let framerate = 3000u32;
@@ -254,6 +260,47 @@ pub fn convert_bpm(file_path: &Path, is_folder: bool) -> Result<(), String> {
 
 // ─── CLOUDS ───────────────────────────────────────────────────────────────────
 
+/// Render every page of a PDF to a raster image using pdftoppm (poppler-utils).
+/// This mirrors the Python fitz (PyMuPDF) approach of rendering page content.
+/// Requires: sudo apt install poppler-utils
+fn render_pdf_pages(pdf: &Path, name: &str) -> Result<Vec<RgbImage>, String> {
+    let tmp_dir = pdf.with_file_name(format!("{name}_pages"));
+    fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+    let prefix = tmp_dir.join("page");
+
+    let ok = Command::new("pdftoppm")
+        .args([
+            "-r", "150",
+            "-png",
+            pdf.to_str().unwrap(),
+            prefix.to_str().unwrap(),
+        ])
+        .status()
+        .map_err(|e| format!("pdftoppm failed: {e}. Install with: sudo apt install poppler-utils"))?
+        .success();
+
+    if !ok {
+        let _ = fs::remove_dir_all(&tmp_dir);
+        return Err("pdftoppm exited with error".into());
+    }
+
+    let mut page_files: Vec<_> = fs::read_dir(&tmp_dir)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("png"))
+        .collect();
+    page_files.sort();
+
+    let images: Vec<RgbImage> = page_files
+        .iter()
+        .filter_map(|p| image::open(p).ok().map(|i| i.to_rgb8()))
+        .collect();
+
+    let _ = fs::remove_dir_all(&tmp_dir);
+    Ok(images)
+}
+
 pub fn convert_clouds(file_path: &Path, is_folder: bool) -> Result<(), String> {
     each_pdf(file_path, is_folder, |pdf, name| {
         let out = pdf.with_file_name(format!("{name}.mp4"));
@@ -261,49 +308,19 @@ pub fn convert_clouds(file_path: &Path, is_folder: bool) -> Result<(), String> {
             return Ok(());
         }
 
-        let doc = lopdf::Document::load(pdf).map_err(|e| e.to_string())?;
-        let mut frames: Vec<RgbImage> = Vec::new();
-
-        // Fix E0308: page_iter() yields just the u32 page keys
-        for page_id in doc.page_iter() {
-            if let Ok(lopdf::Object::Dictionary(d)) = doc.get_object(page_id) {
-                if let Ok(res) = d.get(b"Resources") {
-                    if let Ok(xobjs_obj) = res.as_dict().and_then(|r| r.get(b"XObject")) {
-                        if let Ok(xobjs) = xobjs_obj.as_dict() {
-                            for (_, v) in xobjs.iter() {
-                                if let Ok(ref_id) = v.as_reference() {
-                                    if let Ok(lopdf::Object::Stream(s)) =
-                                        doc.get_object(ref_id)
-                                    {
-                                        if let Ok(content) = s.decompressed_content() {
-                                            if let Ok(img) = image::load_from_memory(&content) {
-                                                let rgb = imageops::resize(
-                                                    &img.to_rgb8(),
-                                                    750,
-                                                    360,
-                                                    imageops::FilterType::Triangle,
-                                                );
-                                                frames.push(rgb);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        if frames.is_empty() {
-            return Err("No images found in PDF".into());
+        // Render each PDF page as a raster image (like Python's fitz page.get_pixmap)
+        let raw_frames = render_pdf_pages(pdf, name)?;
+        if raw_frames.is_empty() {
+            return Err("No pages could be rendered from PDF".into());
         }
 
         let (w, h) = (750u32, 360u32);
-        let total_w = w * frames.len() as u32 + w;
+        // Extra blank frame at the end (matches Python black_image padding)
+        let total_w = w * (raw_frames.len() as u32 + 1);
         let mut strip = RgbImage::new(total_w, h);
-        for (i, img) in frames.iter().enumerate() {
-            imageops::replace(&mut strip, img, (i as i64) * w as i64, 0);
+        for (i, img) in raw_frames.iter().enumerate() {
+            let resized = imageops::resize(img, w, h, imageops::FilterType::Triangle);
+            imageops::replace(&mut strip, &resized, (i as i64) * w as i64, 0);
         }
 
         let fps = 25.0f64;
@@ -330,22 +347,19 @@ pub fn convert_clouds(file_path: &Path, is_folder: bool) -> Result<(), String> {
         {
             let stdin = child.stdin.as_mut().unwrap();
             let mut raw: Vec<u8> = vec![0; (w * h * 3) as usize];
-            
+
             for fi in 0..total_frames {
                 let x = ((fi as f64 * scroll) as u32).min(total_w - w);
-                
-                // Fix borrow and closure lifetime issues using simple nested loops
                 let mut idx = 0;
                 for y in 0..h {
                     for x2 in 0..w {
                         let p = strip.get_pixel(x + x2, y);
-                        raw[idx] = p[0];
+                        raw[idx]     = p[0];
                         raw[idx + 1] = p[1];
                         raw[idx + 2] = p[2];
                         idx += 3;
                     }
                 }
-                
                 stdin.write_all(&raw).map_err(|e| e.to_string())?;
             }
         }
@@ -390,7 +404,7 @@ pub fn convert_rgb(file_path: &Path, is_folder: bool) -> Result<(), String> {
             }
         }
         if colors.is_empty() {
-            return Err("No colors found in PDF".into());
+            return Err("No RGB color data found in PDF".into());
         }
 
         let mut interpolated: Vec<[u8; 3]> = Vec::new();
@@ -463,6 +477,10 @@ pub fn convert_text(file_path: &Path, is_folder: bool, color: [u8; 3]) -> Result
             .chunks(chunk_size)
             .map(|c| c.iter().collect())
             .collect();
+
+        if chunks.is_empty() {
+            return Err("No text found in PDF".into());
+        }
 
         let frame_w = 600u32;
         let frame_h = 225u32;
