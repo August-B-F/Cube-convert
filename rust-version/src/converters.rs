@@ -264,7 +264,8 @@ pub fn convert_clouds(file_path: &Path, is_folder: bool) -> Result<(), String> {
         let doc = lopdf::Document::load(pdf).map_err(|e| e.to_string())?;
         let mut frames: Vec<RgbImage> = Vec::new();
 
-        for &page_id in doc.page_iter() {
+        // Fix E0308: page_iter() yields just the u32 page keys
+        for page_id in doc.page_iter() {
             if let Ok(lopdf::Object::Dictionary(d)) = doc.get_object(page_id) {
                 if let Ok(res) = d.get(b"Resources") {
                     if let Ok(xobjs_obj) = res.as_dict().and_then(|r| r.get(b"XObject")) {
@@ -331,7 +332,6 @@ pub fn convert_clouds(file_path: &Path, is_folder: bool) -> Result<(), String> {
             for fi in 0..total_frames {
                 let x = ((fi as f64 * scroll) as u32).min(total_w - w);
                 
-                // Manually write out crop instead of using unsupported .view()
                 let raw: Vec<u8> = (0..h)
                     .flat_map(|y| {
                         (0..w).flat_map(move |x2| {
@@ -473,7 +473,6 @@ pub fn convert_text(file_path: &Path, is_folder: bool, color: [u8; 3]) -> Result
                 if let Some(prev) = last {
                     w += font.pair_kerning(scale, prev, g.id());
                 }
-                // Fix borrow of moved value: must call .clone()
                 w += g.clone().scaled(scale).h_metrics().advance_width;
                 last = Some(g.id());
             }
