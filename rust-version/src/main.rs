@@ -1,7 +1,6 @@
 use eframe::egui;
 use rfd::FileDialog;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
 mod converters {
@@ -22,34 +21,34 @@ mod converters {
         }
     }
 
-    pub fn convert_wind(file_path: &Path, is_folder: bool) -> Result<(), String> {
+    pub fn convert_wind(file_path: &Path, _is_folder: bool) -> Result<(), String> {
         // Implement Wind PDF to MP3/WAV parsing using lopdf and hound instead of PyPDF2 and PyDub
         // For now, this is a placeholder where you put the port of WIND_TO_MP3.py logic
         println!("Converting Wind data for: {:?}", file_path);
         Ok(())
     }
 
-    pub fn convert_bpm(file_path: &Path, is_folder: bool) -> Result<(), String> {
+    pub fn convert_bpm(file_path: &Path, _is_folder: bool) -> Result<(), String> {
         // Placeholder for BPM_MP3.py logic
         println!("Converting BPM data for: {:?}", file_path);
         Ok(())
     }
 
-    pub fn convert_clouds(file_path: &Path, is_folder: bool) -> Result<(), String> {
+    pub fn convert_clouds(file_path: &Path, _is_folder: bool) -> Result<(), String> {
         // Placeholder for CLOUDS_TO_MP4.py logic
         println!("Converting Clouds data for: {:?}", file_path);
         Ok(())
     }
 
-    pub fn convert_rgb(file_path: &Path, is_folder: bool) -> Result<(), String> {
+    pub fn convert_rgb(file_path: &Path, _is_folder: bool) -> Result<(), String> {
         // Placeholder for RGB_MP4.py logic
         println!("Converting RGB data for: {:?}", file_path);
         Ok(())
     }
 
-    pub fn convert_text(file_path: &Path, is_folder: bool, color: [u8; 3]) -> Result<(), String> {
+    pub fn convert_text(file_path: &Path, _is_folder: bool, _color: [u8; 3]) -> Result<(), String> {
         // Placeholder for TEXT_TO_MP4.py logic using the RGB color array
-        println!("Converting Text data for: {:?} with color {:?}", file_path, color);
+        println!("Converting Text data for: {:?} with color {:?}", file_path, _color);
         Ok(())
     }
 }
@@ -221,6 +220,6 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Cube-Convert",
         options,
-        Box::new(|_cc| Ok(Box::new(CubeConvertApp::default()))),
+        Box::new(|_cc| Box::new(CubeConvertApp::default())),
     )
 }
