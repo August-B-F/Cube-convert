@@ -20,7 +20,7 @@ pub fn convert_rgb(
     tx: ProgressTx,
     cancel: CancelFlag,
 ) -> Result<(), String> {
-    shared::process_files(file_path, is_folder, tx, cancel, |pdf, name| {
+    shared::process_files(file_path, is_folder, tx, cancel, |pdf, name, prog_tx| {
         let out = pdf.with_file_name(format!("{name}.mp4"));
         if out.exists() {
             return Ok(());
@@ -52,29 +52,45 @@ pub fn convert_rgb(
         }).collect();
 
         let ffmpeg = shared::ffmpeg_bin();
-        let preset = shared::ffmpeg_preset();
+        // Force ultrafast preset for speed
+        let mut args: Vec<String> = vec![
+            "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(),
+            "-f".into(), "rawvideo".into(), "-pix_fmt".into(), "rgb24".into(),
+            "-s".into(), "520x520".into(), "-r".into(), "25".into(),
+            "-i".into(), "pipe:0".into(), "-c:v".into(), "libx264".into(),
+            "-preset".into(), "ultrafast".into(), "-pix_fmt".into(), "yuv420p".into(),
+        ];
+        
+        if is_folder {
+            args.push("-threads".into());
+            args.push("2".into());
+        }
+        
+        args.push(out.to_string_lossy().to_string());
 
         let mut child = Command::new(&ffmpeg)
-            .args([
-                "-y", "-hide_banner", "-loglevel", "error",
-                "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "520x520", "-r", "25",
-                "-i", "pipe:0", "-c:v", "libx264", "-preset", &preset,
-                "-pix_fmt", "yuv420p", 
-                "-threads", "1", // Limit threads per job
-                out.to_str().unwrap(),
-            ])
+            .args(&args)
             .stdin(Stdio::piped())
             .spawn()
             .map_err(|e| format!("failed to spawn '{ffmpeg}': {e}"))?;
 
         {
-            let stdin = child.stdin.as_mut().ok_or("ffmpeg stdin unavailable")?;
+            let mut stdin = child.stdin.take().ok_or("ffmpeg stdin unavailable")?;
             let mut raw = vec![0u8; 520 * 520 * 3];
+            let mut count = 0;
             for color in &gradient {
                 for px in raw.chunks_mut(3) {
                     px[0] = color[0]; px[1] = color[1]; px[2] = color[2];
                 }
                 stdin.write_all(&raw).map_err(|e| e.to_string())?;
+                
+                count += 1;
+                if count % 250 == 0 {
+                    let _ = prog_tx.send(super::Progress::Update {
+                        name: name.to_string(),
+                        fraction: count as f32 / num_frames as f32,
+                    });
+                }
             }
         }
         child.wait().map_err(|e| e.to_string())?;

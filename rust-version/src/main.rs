@@ -1,5 +1,6 @@
 use eframe::egui;
 use rfd::FileDialog;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::thread;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
@@ -32,6 +33,7 @@ struct CubeConvertApp {
     // Progress state
     progress_current: usize,
     progress_total: usize,
+    file_fractions: HashMap<String, f32>,
     current_file: String,
 
     // Concurrency
@@ -52,6 +54,7 @@ impl Default for CubeConvertApp {
             status_msg: String::new(),
             progress_current: 0,
             progress_total: 0,
+            file_fractions: HashMap::new(),
             current_file: String::new(),
             tx,
             rx,
@@ -62,22 +65,40 @@ impl Default for CubeConvertApp {
 
 impl eframe::App for CubeConvertApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let mut style = (*ctx.style()).clone();
+        style.spacing.button_padding = egui::vec2(12.0, 6.0);
+        ctx.set_style(style);
+
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 AppMessage::Progress(p) => match p {
                     Progress::Init { total } => {
                         self.progress_total = total;
                         self.progress_current = 0;
+                        self.file_fractions.clear();
                     }
                     Progress::Start { name } => {
-                        self.current_file = name;
+                        self.current_file = name.clone();
+                        self.file_fractions.insert(name, 0.0);
                     }
-                    Progress::Done => {
+                    Progress::Update { name, fraction } => {
+                        self.file_fractions.insert(name, fraction);
+                    }
+                    Progress::Done { name } => {
                         self.progress_current += 1;
+                        self.file_fractions.remove(&name);
+                        // Clear current file display if it was the one finishing
+                        if self.current_file == name {
+                            self.current_file.clear();
+                        }
                     }
                     Progress::Error { name, error } => {
-                        self.progress_current += 1;
-                        self.status_msg = format!("Error in {}: {}", name, error);
+                        // Don't increment progress_current if batch error
+                        if name != "Batch" {
+                            self.progress_current += 1;
+                            self.file_fractions.remove(&name);
+                        }
+                        self.status_msg = format!("Error: {}", error);
                     }
                 },
                 AppMessage::Finished => {
@@ -87,7 +108,7 @@ impl eframe::App for CubeConvertApp {
                         self.status_msg = if self.cancel_flag.load(Ordering::Relaxed) {
                             "Cancelled.".to_string()
                         } else {
-                            "All done!".to_string()
+                            "Done.".to_string()
                         };
                     }
                 }
@@ -172,16 +193,21 @@ impl eframe::App for CubeConvertApp {
 
             if self.is_converting {
                 ui.add_space(10.0);
+                
+                // Calculate interpolated progress
+                let fraction_sum: f32 = self.file_fractions.values().sum();
                 let progress = if self.progress_total > 0 {
-                    self.progress_current as f32 / self.progress_total as f32
+                    (self.progress_current as f32 + fraction_sum) / self.progress_total as f32
                 } else {
                     0.0
                 };
+                
                 ui.add(
-                    egui::ProgressBar::new(progress)
+                    egui::ProgressBar::new(progress.clamp(0.0, 1.0))
                         .text(format!("{}/{} files done", self.progress_current, self.progress_total))
-                        .animate(true),
+                        .animate(self.is_folder), // Only animate if folder
                 );
+                
                 if !self.current_file.is_empty() {
                     ui.label(format!("Processing: {}", self.current_file));
                 }
@@ -189,11 +215,16 @@ impl eframe::App for CubeConvertApp {
 
             if !self.status_msg.is_empty() {
                 ui.add_space(8.0);
-                ui.label(&self.status_msg);
+                if self.status_msg == "Done." {
+                    ui.colored_label(egui::Color32::from_rgb(0, 200, 0), &self.status_msg);
+                } else if self.status_msg.starts_with("Error") || self.status_msg.starts_with("Cancelled") {
+                    ui.colored_label(egui::Color32::from_rgb(200, 0, 0), &self.status_msg);
+                } else {
+                    ui.label(&self.status_msg);
+                }
             }
         });
 
-        // Keep repainting while converting so progress bar stays live
         if self.is_converting {
             ctx.request_repaint();
         }
@@ -206,6 +237,7 @@ impl CubeConvertApp {
         self.status_msg = "Starting...".to_string();
         self.progress_current = 0;
         self.progress_total = 0;
+        self.file_fractions.clear();
         self.current_file.clear();
 
         self.cancel_flag.store(false, Ordering::Relaxed);
@@ -222,23 +254,18 @@ impl CubeConvertApp {
         };
         let color = self.rgb_color;
 
-        // Internal progress channel: worker -> forwarding thread
         let (prog_tx, prog_rx) = crossbeam_channel::unbounded::<Progress>();
 
-        // tx_fwd: owned by the forwarding thread
         let tx_fwd = self.tx.clone();
         let ctx_fwd = ctx.clone();
         thread::spawn(move || {
-            // Exits automatically when prog_tx is dropped in the worker thread
             while let Ok(msg) = prog_rx.recv() {
                 let _ = tx_fwd.send(AppMessage::Progress(msg));
                 ctx_fwd.request_repaint();
             }
         });
 
-        // tx_done: owned by the worker thread for the final Finished message
         let tx_done = self.tx.clone();
-
         thread::spawn(move || {
             let result = match tab {
                 0 => converters::convert_wind(&path, is_folder, prog_tx.clone(), cancel),
@@ -249,17 +276,13 @@ impl CubeConvertApp {
                 _ => Err("Unknown mode".into()),
             };
 
-            // Report any top-level batch error through the progress channel
             if let Err(e) = result {
                 let _ = prog_tx.send(Progress::Error {
                     name: "Batch".into(),
                     error: e,
                 });
             }
-
-            // Drop prog_tx so the forwarding thread's recv() returns Err and it exits cleanly
             drop(prog_tx);
-
             let _ = tx_done.send(AppMessage::Finished);
             ctx.request_repaint();
         });

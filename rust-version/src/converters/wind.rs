@@ -9,7 +9,7 @@ pub fn convert_wind(
     tx: ProgressTx,
     cancel: CancelFlag,
 ) -> Result<(), String> {
-    shared::process_files(file_path, is_folder, tx, cancel, |pdf, name| {
+    shared::process_files(file_path, is_folder, tx, cancel, |pdf, name, prog_tx| {
         let out = pdf.with_file_name(format!("{name}.mp3"));
         if out.exists() {
             return Ok(());
@@ -41,9 +41,6 @@ pub fn convert_wind(
             return Err("assets/Wind_Loop.wav not found".into());
         }
 
-        // ... (audio processing logic same as before, omitted for brevity but logic remains)
-        // Re-implementing logic compactly for context correctness in file replacement:
-        
         let mut reader = hound::WavReader::open(wind_path)
             .map_err(|e| format!("open {}: {e}", wind_path.display()))?;
         let wind_data: Vec<f32> = match reader.spec().sample_format {
@@ -95,15 +92,20 @@ pub fn convert_wind(
             w.finalize().map_err(|e| e.to_string())?;
         }
 
+        // Just mark 50% progress since we are about to encode
+        let _ = prog_tx.send(super::Progress::Update { name: name.to_string(), fraction: 0.5 });
+
         let ffmpeg = shared::ffmpeg_bin();
+        // Use -stats to allow run_ffmpeg to work (though we pass None frames, it just runs)
         let args: Vec<String> = vec![
-            "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(),
+            "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(), "-stats".into(),
             "-i".into(), tmp.to_string_lossy().to_string(),
             "-vn".into(), "-ar".into(), "44100".into(), "-ac".into(), "2".into(),
             "-b:a".into(), "192k".into(), "-codec:a".into(), "libmp3lame".into(),
             out.to_string_lossy().to_string(),
         ];
-        shared::run_cmd(&ffmpeg, &args)?;
+        
+        shared::run_ffmpeg(&args, None, prog_tx, name)?;
 
         let _ = fs::remove_file(&tmp);
         let _ = fs::remove_dir_all(&tmp_dir);

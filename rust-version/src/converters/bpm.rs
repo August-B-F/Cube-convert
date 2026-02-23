@@ -9,7 +9,7 @@ pub fn convert_bpm(
     tx: ProgressTx,
     cancel: CancelFlag,
 ) -> Result<(), String> {
-    shared::process_files(file_path, is_folder, tx, cancel, |pdf, name| {
+    shared::process_files(file_path, is_folder, tx, cancel, |pdf, name, prog_tx| {
         let out = pdf.with_file_name(format!("{name}.mp3"));
         if out.exists() {
             return Ok(());
@@ -75,17 +75,19 @@ pub fn convert_bpm(
             w.finalize().map_err(|e| e.to_string())?;
         }
 
+        let _ = prog_tx.send(super::Progress::Update { name: name.to_string(), fraction: 0.5 });
+
         let ffmpeg = shared::ffmpeg_bin();
         let preset = shared::ffmpeg_preset();
         let args: Vec<String> = vec![
-            "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(),
+            "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(), "-stats".into(),
             "-i".into(), tmp.to_string_lossy().to_string(),
             "-vn".into(), "-ar".into(), "48000".into(), "-ac".into(), "2".into(),
             "-b:a".into(), "320k".into(), "-codec:a".into(), "libmp3lame".into(),
             "-preset".into(), preset,
             out.to_string_lossy().to_string(),
         ];
-        shared::run_cmd(&ffmpeg, &args)?;
+        shared::run_ffmpeg(&args, None, prog_tx, name)?;
 
         let _ = fs::remove_file(&tmp);
         let _ = fs::remove_dir_all(&tmp_dir);
