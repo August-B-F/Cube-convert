@@ -2,8 +2,10 @@ use eframe::egui;
 use rfd::FileDialog;
 use std::path::PathBuf;
 use std::thread;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 mod converters;
+use converters::Progress;
 
 #[derive(PartialEq)]
 enum ConversionType {
@@ -15,8 +17,8 @@ enum ConversionType {
 }
 
 enum AppMessage {
-    Success(String),
-    Error(String),
+    Progress(Progress),
+    Finished,
 }
 
 struct CubeConvertApp {
@@ -26,8 +28,16 @@ struct CubeConvertApp {
     is_converting: bool,
     rgb_color: [u8; 3],
     status_msg: String,
+    
+    // Progress state
+    progress_current: usize,
+    progress_total: usize,
+    current_file: String,
+    
+    // Concurrency
     tx: crossbeam_channel::Sender<AppMessage>,
     rx: crossbeam_channel::Receiver<AppMessage>,
+    cancel_flag: Arc<AtomicBool>,
 }
 
 impl Default for CubeConvertApp {
@@ -40,61 +50,93 @@ impl Default for CubeConvertApp {
             is_converting: false,
             rgb_color: [255, 255, 255],
             status_msg: String::new(),
+            progress_current: 0,
+            progress_total: 0,
+            current_file: String::new(),
             tx,
             rx,
+            cancel_flag: Arc::new(AtomicBool::new(false)),
         }
     }
 }
 
 impl eframe::App for CubeConvertApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if let Ok(msg) = self.rx.try_recv() {
-            self.is_converting = false;
+        // Handle messages from worker thread
+        while let Ok(msg) = self.rx.try_recv() {
             match msg {
-                AppMessage::Success(m) => self.status_msg = format!("\u{2714} {}", m),
-                AppMessage::Error(e) => self.status_msg = format!("\u{2718} Error: {}", e),
+                AppMessage::Progress(p) => match p {
+                    Progress::Init { total } => {
+                        self.progress_total = total;
+                        self.progress_current = 0;
+                    }
+                    Progress::Start { name } => {
+                        self.current_file = name;
+                    }
+                    Progress::Done => {
+                        self.progress_current += 1;
+                    }
+                    Progress::Error { name, error } => {
+                        self.progress_current += 1;
+                        self.status_msg = format!("Error in {}: {}", name, error);
+                    }
+                },
+                AppMessage::Finished => {
+                    self.is_converting = false;
+                    self.status_msg = if self.cancel_flag.load(Ordering::Relaxed) {
+                        "Cancelled.".to_string()
+                    } else {
+                        "All done!".to_string()
+                    };
+                }
             }
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Cube-Convert");
+            // No header as requested
+            
             ui.add_space(8.0);
 
-            ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.selected_tab, ConversionType::Wind, "WIND");
-                ui.selectable_value(&mut self.selected_tab, ConversionType::Bpm, "BPM");
-                ui.selectable_value(&mut self.selected_tab, ConversionType::Clouds, "CLOUDS");
-                ui.selectable_value(&mut self.selected_tab, ConversionType::Rgb, "RGB");
-                ui.selectable_value(&mut self.selected_tab, ConversionType::Text, "TEXT");
+            // Tab selection (disabled when converting)
+            ui.add_enabled_ui(!self.is_converting, |ui| {
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut self.selected_tab, ConversionType::Wind, "WIND");
+                    ui.selectable_value(&mut self.selected_tab, ConversionType::Bpm, "BPM");
+                    ui.selectable_value(&mut self.selected_tab, ConversionType::Clouds, "CLOUDS");
+                    ui.selectable_value(&mut self.selected_tab, ConversionType::Rgb, "RGB");
+                    ui.selectable_value(&mut self.selected_tab, ConversionType::Text, "TEXT");
+                });
             });
             ui.separator();
 
             let desc = match self.selected_tab {
-                ConversionType::Wind   => "Convert wind intensities (PDF) \u{2192} MP3",
-                ConversionType::Bpm    => "Convert BPM data (PDF) \u{2192} MP3",
-                ConversionType::Clouds => "Convert cloud images (PDF) \u{2192} scrolling MP4",
-                ConversionType::Rgb    => "Convert RGB values (PDF) \u{2192} gradient MP4",
-                ConversionType::Text   => "Convert text (PDF) \u{2192} scrolling text MP4",
+                ConversionType::Wind   => "Convert wind intensities (PDF) -> MP3",
+                ConversionType::Bpm    => "Convert BPM data (PDF) -> MP3",
+                ConversionType::Clouds => "Convert cloud images (PDF) -> scrolling MP4",
+                ConversionType::Rgb    => "Convert RGB values (PDF) -> gradient MP4",
+                ConversionType::Text   => "Convert text (PDF) -> scrolling text MP4",
             };
             ui.label(desc);
             ui.add_space(16.0);
 
-            ui.horizontal(|ui| {
-                // Fixed Unicode string literal escapes
-                if ui.button("\u{1F4C4} Select File").clicked() {
-                    if let Some(path) = FileDialog::new().add_filter("PDF", &["pdf"]).pick_file() {
-                        self.selected_path = Some(path);
-                        self.is_folder = false;
-                        self.status_msg.clear();
+            // File selection (disabled when converting)
+            ui.add_enabled_ui(!self.is_converting, |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("\u{1F4C4} Select File").clicked() {
+                        if let Some(path) = FileDialog::new().add_filter("PDF", &["pdf"]).pick_file() {
+                            self.selected_path = Some(path);
+                            self.is_folder = false;
+                            self.status_msg.clear();
+                        }
                     }
-                }
-                if ui.button("\u{1F4C1} Select Folder").clicked() {
-                    if let Some(path) = FileDialog::new().pick_folder() {
-                        self.selected_path = Some(path);
-                        self.is_folder = true;
-                        self.status_msg.clear();
+                    if ui.button("\u{1F4C1} Select Folder").clicked() {
+                        if let Some(path) = FileDialog::new().pick_folder() {
+                            self.selected_path = Some(path);
+                            self.is_folder = true;
+                            self.status_msg.clear();
+                        }
                     }
-                }
+                });
             });
 
             if let Some(path) = &self.selected_path {
@@ -106,61 +148,112 @@ impl eframe::App for CubeConvertApp {
             ui.add_space(10.0);
 
             if self.selected_tab == ConversionType::Text {
-                ui.horizontal(|ui| {
-                    ui.label("Text Color:");
-                    ui.color_edit_button_srgb(&mut self.rgb_color);
+                ui.add_enabled_ui(!self.is_converting, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Text Color:");
+                        ui.color_edit_button_srgb(&mut self.rgb_color);
+                    });
                 });
             }
 
             ui.add_space(16.0);
 
-            ui.add_enabled_ui(!self.is_converting && self.selected_path.is_some(), |ui| {
-                if ui.button("\u{25B6} Submit").clicked() {
-                    self.is_converting = true;
-                    self.status_msg = "Converting\u{2026} please wait.".to_string();
-
-                    let path = self.selected_path.clone().unwrap();
-                    let is_folder = self.is_folder;
-                    let tab = match self.selected_tab {
-                        ConversionType::Wind   => 0,
-                        ConversionType::Bpm    => 1,
-                        ConversionType::Clouds => 2,
-                        ConversionType::Rgb    => 3,
-                        ConversionType::Text   => 4,
-                    };
-                    let color = self.rgb_color;
-                    let tx = self.tx.clone();
-                    let ctx = ctx.clone();
-
-                    thread::spawn(move || {
-                        let result = match tab {
-                            0 => converters::convert_wind(&path, is_folder),
-                            1 => converters::convert_bpm(&path, is_folder),
-                            2 => converters::convert_clouds(&path, is_folder),
-                            3 => converters::convert_rgb(&path, is_folder),
-                            4 => converters::convert_text(&path, is_folder, color),
-                            _ => Err("Unknown mode".into()),
-                        };
-
-                        let msg = match result {
-                            Ok(_) => AppMessage::Success("Conversion completed!".into()),
-                            Err(e) => AppMessage::Error(e),
-                        };
-                        let _ = tx.send(msg);
-                        ctx.request_repaint();
-                    });
+            // Controls
+            ui.horizontal(|ui| {
+                if !self.is_converting {
+                    if ui.add_enabled(self.selected_path.is_some(), egui::Button::new("\u{25B6} Submit")).clicked() {
+                        self.start_conversion(ctx.clone());
+                    }
+                } else {
+                    if ui.button("Cancel").clicked() {
+                        self.cancel_flag.store(true, Ordering::Relaxed);
+                        self.status_msg = "Cancelling...".to_string();
+                    }
                 }
             });
 
+            // Progress Bar
             if self.is_converting {
-                ui.add_space(8.0);
-                ui.spinner();
+                ui.add_space(10.0);
+                let progress = if self.progress_total > 0 {
+                    self.progress_current as f32 / self.progress_total as f32
+                } else {
+                    0.0
+                };
+                
+                ui.add(egui::ProgressBar::new(progress)
+                    .text(format!("{}/{} files done", self.progress_current, self.progress_total)));
+                
+                if !self.current_file.is_empty() {
+                    ui.label(format!("Processing: {}", self.current_file));
+                }
             }
 
             if !self.status_msg.is_empty() {
                 ui.add_space(8.0);
                 ui.label(&self.status_msg);
             }
+        });
+    }
+}
+
+impl CubeConvertApp {
+    fn start_conversion(&mut self, ctx: egui::Context) {
+        self.is_converting = true;
+        self.status_msg = "Starting...".to_string();
+        self.progress_current = 0;
+        self.progress_total = 0;
+        self.current_file.clear();
+        
+        // Reset cancel flag
+        self.cancel_flag.store(false, Ordering::Relaxed);
+        let cancel = self.cancel_flag.clone();
+
+        let path = self.selected_path.clone().unwrap();
+        let is_folder = self.is_folder;
+        let tab = match self.selected_tab {
+            ConversionType::Wind   => 0,
+            ConversionType::Bpm    => 1,
+            ConversionType::Clouds => 2,
+            ConversionType::Rgb    => 3,
+            ConversionType::Text   => 4,
+        };
+        let color = self.rgb_color;
+        let tx = self.tx.clone();
+        
+        // Progress channel for the worker
+        let (prog_tx, prog_rx) = crossbeam_channel::unbounded();
+        
+        // Forward progress messages to main channel
+        let main_tx = self.tx.clone();
+        let ctx_clone = ctx.clone();
+        
+        thread::spawn(move || {
+            while let Ok(msg) = prog_rx.recv() {
+                let _ = main_tx.send(AppMessage::Progress(msg));
+                ctx_clone.request_repaint();
+            }
+        });
+
+        thread::spawn(move || {
+            let result = match tab {
+                0 => converters::convert_wind(&path, is_folder, prog_tx.clone(), cancel.clone()),
+                1 => converters::convert_bpm(&path, is_folder, prog_tx.clone(), cancel.clone()),
+                2 => converters::convert_clouds(&path, is_folder, prog_tx.clone(), cancel.clone()),
+                3 => converters::convert_rgb(&path, is_folder, prog_tx.clone(), cancel.clone()),
+                4 => converters::convert_text(&path, is_folder, color, prog_tx.clone(), cancel.clone()),
+                _ => Err("Unknown mode".into()),
+            };
+
+            if let Err(e) = result {
+                // If the whole batch failed (e.g. invalid path), report it
+                // Individual file errors are reported via Progress::Error
+                // We'll treat this as a status update
+                let _ = main_tx.send(AppMessage::Progress(Progress::Error { name: "Batch".into(), error: e }));
+            }
+            
+            let _ = tx.send(AppMessage::Finished);
+            ctx.request_repaint();
         });
     }
 }

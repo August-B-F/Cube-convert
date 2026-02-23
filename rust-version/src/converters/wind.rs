@@ -1,10 +1,15 @@
 use std::fs;
 use std::path::Path;
 
-use super::shared;
+use super::{shared, CancelFlag, ProgressTx};
 
-pub fn convert_wind(file_path: &Path, is_folder: bool) -> Result<(), String> {
-    shared::each_pdf(file_path, is_folder, |pdf, name| {
+pub fn convert_wind(
+    file_path: &Path,
+    is_folder: bool,
+    tx: ProgressTx,
+    cancel: CancelFlag,
+) -> Result<(), String> {
+    shared::process_files(file_path, is_folder, tx, cancel, |pdf, name| {
         let out = pdf.with_file_name(format!("{name}.mp3"));
         if out.exists() {
             return Ok(());
@@ -14,7 +19,6 @@ pub fn convert_wind(file_path: &Path, is_folder: bool) -> Result<(), String> {
         let mut wind_intensities: Vec<Vec<f32>> = Vec::new();
 
         for line in text.split('\n') {
-            // Match Python: strip first 2 chars (often a prefix) then split by comma
             let stripped = if line.len() > 2 { &line[2..] } else { line };
             let day: Vec<f32> = stripped
                 .split(',')
@@ -26,7 +30,7 @@ pub fn convert_wind(file_path: &Path, is_folder: bool) -> Result<(), String> {
         }
 
         if wind_intensities.is_empty() {
-            return Err("No wind intensity data found in PDF".into());
+            return Err("No wind intensity data found".into());
         }
         if wind_intensities.len() >= 25 {
             wind_intensities.truncate(24);
@@ -37,6 +41,9 @@ pub fn convert_wind(file_path: &Path, is_folder: bool) -> Result<(), String> {
             return Err("assets/Wind_Loop.wav not found".into());
         }
 
+        // ... (audio processing logic same as before, omitted for brevity but logic remains)
+        // Re-implementing logic compactly for context correctness in file replacement:
+        
         let mut reader = hound::WavReader::open(wind_path)
             .map_err(|e| format!("open {}: {e}", wind_path.display()))?;
         let wind_data: Vec<f32> = match reader.spec().sample_format {
@@ -49,15 +56,12 @@ pub fn convert_wind(file_path: &Path, is_folder: bool) -> Result<(), String> {
                 .collect(),
         };
         let n_wind = wind_data.len();
-
         let sample_rate = 44100u32;
         let duration_per_day = 30.0f32;
         let mut output: Vec<f32> = Vec::new();
 
         for day in &wind_intensities {
-            if day.is_empty() {
-                continue;
-            }
+            if day.is_empty() { continue; }
             let dur_per_int = duration_per_day / day.len() as f32;
             let samples = (sample_rate as f32 * duration_per_day) as usize;
 
@@ -69,12 +73,7 @@ pub fn convert_wind(file_path: &Path, is_folder: bool) -> Result<(), String> {
                 let intensity = day[idx] + (day[next] - day[idx]) * frac;
 
                 let wind_sample = wind_data[i % n_wind];
-                let value = if intensity <= 1.0 {
-                    0.0
-                } else {
-                    wind_sample * intensity / 15.0
-                };
-                // +3 dB ≈ ×1.412
+                let value = if intensity <= 1.0 { 0.0 } else { wind_sample * intensity / 15.0 };
                 output.push(value * 1.412);
             }
         }
@@ -98,24 +97,12 @@ pub fn convert_wind(file_path: &Path, is_folder: bool) -> Result<(), String> {
 
         let ffmpeg = shared::ffmpeg_bin();
         let args: Vec<String> = vec![
-            "-y".into(),
-            "-hide_banner".into(),
-            "-loglevel".into(),
-            (if shared::verbose() { "info" } else { "error" }).into(),
-            "-i".into(),
-            tmp.to_string_lossy().to_string(),
-            "-vn".into(),
-            "-ar".into(),
-            "44100".into(),
-            "-ac".into(),
-            "2".into(),
-            "-b:a".into(),
-            "192k".into(),
-            "-codec:a".into(),
-            "libmp3lame".into(),
+            "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(),
+            "-i".into(), tmp.to_string_lossy().to_string(),
+            "-vn".into(), "-ar".into(), "44100".into(), "-ac".into(), "2".into(),
+            "-b:a".into(), "192k".into(), "-codec:a".into(), "libmp3lame".into(),
             out.to_string_lossy().to_string(),
         ];
-
         shared::run_cmd(&ffmpeg, &args)?;
 
         let _ = fs::remove_file(&tmp);
