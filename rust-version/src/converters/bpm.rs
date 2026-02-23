@@ -9,7 +9,7 @@ pub fn convert_bpm(
     tx: ProgressTx,
     cancel: CancelFlag,
 ) -> Result<(), String> {
-    shared::process_files(file_path, is_folder, tx, cancel, |pdf, name, prog_tx| {
+    shared::process_files(file_path, is_folder, tx, cancel.clone(), |pdf, name, prog_tx| {
         let out = pdf.with_file_name(format!("{name}.mp3"));
         if out.exists() {
             return Ok(());
@@ -46,7 +46,6 @@ pub fn convert_bpm(
             let mut w = hound::WavWriter::create(&tmp, spec)
                 .map_err(|e| format!("create {}: {e}", tmp.display()))?;
             let mut written = 0usize;
-            // Removed 'mut' from write_n
             let mut write_n = |w: &mut hound::WavWriter<_>, sample: i16, n: usize, written: &mut usize| -> Result<(), String> {
                 for _ in 0..n {
                     if *written >= twelve_min_samples { break; }
@@ -58,6 +57,10 @@ pub fn convert_bpm(
             };
 
             for &bpm in &bpm_list {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Err("Cancelled.".into());
+                }
+
                 if bpm == 0 || written >= twelve_min_samples { break; }
                 let pulses = ((bpm as f64 / 60.0) * pulse_duration) as usize;
                 let pulse_len = ((60.0 / bpm as f64 * 2.0) * framerate as f64) as usize;
@@ -71,6 +74,9 @@ pub fn convert_bpm(
             let pulse_len = ((60.0 / last_bpm as f64 * 2.0) * framerate as f64) as usize;
             let boosted = (amplitude as f64 * 3.162).clamp(i16::MIN as f64, i16::MAX as f64) as i16;
             while written < twelve_min_samples {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Err("Cancelled.".into());
+                }
                 write_n(&mut w, boosted, pulse_len, &mut written)?;
             }
             w.finalize().map_err(|e| e.to_string())?;
@@ -87,10 +93,11 @@ pub fn convert_bpm(
             "-preset".into(), preset,
             out.to_string_lossy().to_string(),
         ];
-        shared::run_ffmpeg(&args, None, prog_tx, name)?;
+        
+        let result = shared::run_ffmpeg(&args, None, prog_tx, name, cancel.clone());
 
         let _ = fs::remove_file(&tmp);
         let _ = fs::remove_dir_all(&tmp_dir);
-        Ok(())
+        result
     })
 }

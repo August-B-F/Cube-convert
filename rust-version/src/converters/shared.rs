@@ -6,6 +6,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -87,10 +88,12 @@ where
                 let _ = tx.send(Progress::Done { name: stem });
             }
             Err(e) => {
-                let _ = tx.send(Progress::Error {
-                    name: stem,
-                    error: e,
-                });
+                if !cancel.load(Ordering::Relaxed) {
+                    let _ = tx.send(Progress::Error {
+                        name: stem,
+                        error: e,
+                    });
+                }
             }
         }
     });
@@ -144,8 +147,11 @@ pub fn run_ffmpeg(
     total_frames: Option<usize>,
     tx: &ProgressTx,
     name: &str,
+    cancel: CancelFlag, // NEW: We now pass the cancel flag into ffmpeg runner
 ) -> Result<(), String> {
-    use std::io::{BufRead, BufReader};
+    use std::io::{Read, BufRead, BufReader};
+    use std::sync::mpsc;
+    use std::thread;
 
     let program = ffmpeg_bin();
     let mut cmd = Command::new(&program);
@@ -155,12 +161,35 @@ pub fn run_ffmpeg(
     cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
 
     let mut child = cmd.spawn().map_err(|e| format!("failed to spawn '{program}': {e}"))?;
+    let mut stderr = child.stderr.take().unwrap();
+    
+    // We spawn a thread to read ffmpeg's stderr because blocking on read() prevents us
+    // from checking the cancel flag frequently.
+    let (err_tx, err_rx) = mpsc::channel();
+    
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stderr);
+        let mut buffer = Vec::new();
+        // ffmpeg uses '\r' for its progress updates
+        while let Ok(bytes_read) = reader.read_until(b'\r', &mut buffer) {
+            if bytes_read == 0 { break; }
+            if let Ok(line) = String::from_utf8(buffer.clone()) {
+                let _ = err_tx.send(line);
+            }
+            buffer.clear();
+        }
+    });
 
-    if let Some(stderr) = child.stderr.take() {
-        let reader = BufReader::new(stderr);
-        // ffmpeg -stats usually prints progress with carriage returns (\r)
-        for byte_line in reader.split(b'\r') {
-            if let Ok(line) = String::from_utf8(byte_line.unwrap_or_default()) {
+    // Check progress and check cancel flag simultaneously
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Cancelled.".to_string());
+        }
+
+        match err_rx.recv_timeout(Duration::from_millis(50)) {
+            Ok(line) => {
                 let text = line.trim();
                 if let Some(tf) = total_frames {
                     if text.starts_with("frame=") || text.contains("frame=") {
@@ -182,9 +211,23 @@ pub fn run_ffmpeg(
                     }
                 }
             }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // Just continue checking the cancel flag
+                if let Ok(Some(status)) = child.try_wait() {
+                    if status.success() {
+                        return Ok(());
+                    } else {
+                        return Err(format!("ffmpeg exited with {}", status));
+                    }
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                // Thread finished reading stderr
+                break;
+            }
         }
     }
-    
+
     let status = child.wait().map_err(|e| e.to_string())?;
     if status.success() {
         Ok(())

@@ -9,7 +9,7 @@ pub fn convert_wind(
     tx: ProgressTx,
     cancel: CancelFlag,
 ) -> Result<(), String> {
-    shared::process_files(file_path, is_folder, tx, cancel, |pdf, name, prog_tx| {
+    shared::process_files(file_path, is_folder, tx, cancel.clone(), |pdf, name, prog_tx| {
         let out = pdf.with_file_name(format!("{name}.mp3"));
         if out.exists() {
             return Ok(());
@@ -58,6 +58,10 @@ pub fn convert_wind(
         let mut output: Vec<f32> = Vec::new();
 
         for day in &wind_intensities {
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err("Cancelled.".into());
+            }
+
             if day.is_empty() { continue; }
             let dur_per_int = duration_per_day / day.len() as f32;
             let samples = (sample_rate as f32 * duration_per_day) as usize;
@@ -94,7 +98,6 @@ pub fn convert_wind(
 
         let _ = prog_tx.send(super::Progress::Update { name: name.to_string(), fraction: 0.5 });
 
-        // Removed unused `ffmpeg` variable, simplified args
         let args: Vec<String> = vec![
             "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(), "-stats".into(),
             "-i".into(), tmp.to_string_lossy().to_string(),
@@ -103,10 +106,10 @@ pub fn convert_wind(
             out.to_string_lossy().to_string(),
         ];
         
-        shared::run_ffmpeg(&args, None, prog_tx, name)?;
+        let result = shared::run_ffmpeg(&args, None, prog_tx, name, cancel.clone());
 
         let _ = fs::remove_file(&tmp);
         let _ = fs::remove_dir_all(&tmp_dir);
-        Ok(())
+        result
     })
 }

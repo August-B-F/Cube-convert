@@ -19,7 +19,7 @@ fn list_images(dir: &Path) -> Result<Vec<PathBuf>, String> {
 pub fn convert_clouds(
     file_path: &Path,
     is_folder: bool,
-    stitch_images: bool, // NEW: toggles between Image Stitching vs PDF Batch
+    stitch_images: bool, 
     tx: ProgressTx,
     cancel: CancelFlag,
 ) -> Result<(), String> {
@@ -41,6 +41,9 @@ pub fn convert_clouds(
         let mut strip = RgbImage::new(total_w, h);
 
         for (i, p) in page_files.iter().enumerate() {
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err("Cancelled.".into());
+            }
             let img = image::open(p).map_err(|e| format!("open {}: {e}", p.display()))?.to_rgb8();
             let resized = imageops::resize(&img, w, h, imageops::FilterType::Triangle);
             imageops::replace(&mut strip, &resized, (i as i64) * w as i64, 0);
@@ -64,14 +67,15 @@ pub fn convert_clouds(
             out.to_string_lossy().to_string(),
         ];
         
-        shared::run_ffmpeg(&args, Some(total_frames), &tx, &stem)?;
+        let result = shared::run_ffmpeg(&args, Some(total_frames), &tx, &stem, cancel.clone());
 
-        let _ = tx.send(super::Progress::Done { name: stem });
+        if !cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = tx.send(super::Progress::Done { name: stem });
+        }
         let _ = fs::remove_dir_all(&tmp_dir);
-        Ok(())
+        result
     } else {
-        // Standard PDF processing (Single PDF OR Folder of PDFs)
-        shared::process_files(file_path, is_folder, tx, cancel, |pdf, name, prog_tx| {
+        shared::process_files(file_path, is_folder, tx, cancel.clone(), |pdf, name, prog_tx| {
             let out = pdf.with_file_name(format!("{name}.mp4"));
             if out.exists() {
                 return Ok(());
@@ -101,6 +105,10 @@ pub fn convert_clouds(
             let mut strip = RgbImage::new(total_w, h);
 
             for (i, p) in page_files.iter().enumerate() {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    let _ = fs::remove_dir_all(&tmp_dir);
+                    return Err("Cancelled.".into());
+                }
                 let img = image::open(p).map_err(|e| format!("open {}: {e}", p.display()))?.to_rgb8();
                 let resized = imageops::resize(&img, w, h, imageops::FilterType::Triangle);
                 imageops::replace(&mut strip, &resized, (i as i64) * w as i64, 0);
@@ -128,10 +136,10 @@ pub fn convert_clouds(
             }
             args.push(out.to_string_lossy().to_string());
             
-            shared::run_ffmpeg(&args, Some(total_frames), prog_tx, name)?;
+            let result = shared::run_ffmpeg(&args, Some(total_frames), prog_tx, name, cancel.clone());
 
             let _ = fs::remove_dir_all(&tmp_dir);
-            Ok(())
+            result
         })
     }
 }

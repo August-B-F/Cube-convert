@@ -19,7 +19,7 @@ pub fn convert_text(
     let font_data = fs::read(font_path).map_err(|e| e.to_string())?;
     let font = Font::try_from_vec(font_data).ok_or("Failed to load font")?;
 
-    shared::process_files(file_path, is_folder, tx, cancel, |pdf, name, prog_tx| {
+    shared::process_files(file_path, is_folder, tx, cancel.clone(), |pdf, name, prog_tx| {
         let out = pdf.with_file_name(format!("{name}.mp4"));
         if out.exists() {
             return Ok(());
@@ -63,6 +63,9 @@ pub fn convert_text(
         let y = (frame_h as f32 / 2.0 - scale.y / 2.0) as i32;
 
         for chunk in &chunks {
+            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err("Cancelled.".into());
+            }
             let xi = x.round() as i32;
             draw_text_mut(&mut strip, text_color, xi, y, scale, &font, chunk);
             x += measure(chunk);
@@ -78,7 +81,7 @@ pub fn convert_text(
             "-loop".into(), "1".into(), "-i".into(), strip_png.to_string_lossy().to_string(),
             "-vf".into(), vf, "-t".into(), duration.to_string(),
             "-r".into(), fps.to_string(), "-c:v".into(), "libx264".into(),
-            "-preset".into(), "ultrafast".into(), "-pix_fmt".into(), "yuv420p".into(),
+            "-preset".into(), shared::ffmpeg_preset(), "-pix_fmt".into(), "yuv420p".into(),
         ];
         
         if is_folder {
@@ -87,9 +90,9 @@ pub fn convert_text(
         }
         args.push(out.to_string_lossy().to_string());
 
-        shared::run_ffmpeg(&args, Some(total_frames), prog_tx, name)?;
+        let result = shared::run_ffmpeg(&args, Some(total_frames), prog_tx, name, cancel.clone());
 
         let _ = fs::remove_dir_all(&tmp_dir);
-        Ok(())
+        result
     })
 }
