@@ -86,7 +86,6 @@ pub fn convert_bpm(file_path: &Path, is_folder: bool) -> Result<(), String> {
         }
 
         let ffmpeg = shared::ffmpeg_bin();
-        let preset = shared::ffmpeg_preset();
         let args: Vec<String> = vec![
             "-y".into(),
             "-hide_banner".into(),
@@ -103,8 +102,6 @@ pub fn convert_bpm(file_path: &Path, is_folder: bool) -> Result<(), String> {
             "320k".into(),
             "-codec:a".into(),
             "libmp3lame".into(),
-            "-preset".into(),
-            preset,
             out.to_string_lossy().to_string(),
         ];
         shared::run_cmd(&ffmpeg, &args)?;

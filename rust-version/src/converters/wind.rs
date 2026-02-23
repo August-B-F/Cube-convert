@@ -97,8 +97,7 @@ pub fn convert_wind(file_path: &Path, is_folder: bool) -> Result<(), String> {
         }
 
         let ffmpeg = shared::ffmpeg_bin();
-        let preset = shared::ffmpeg_preset();
-        let mut args: Vec<String> = vec![
+        let args: Vec<String> = vec![
             "-y".into(),
             "-hide_banner".into(),
             "-loglevel".into(),
@@ -114,8 +113,6 @@ pub fn convert_wind(file_path: &Path, is_folder: bool) -> Result<(), String> {
             "192k".into(),
             "-codec:a".into(),
             "libmp3lame".into(),
-            "-preset".into(),
-            preset,
             out.to_string_lossy().to_string(),
         ];
 
