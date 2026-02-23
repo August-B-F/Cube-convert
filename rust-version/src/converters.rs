@@ -19,7 +19,8 @@ use std::sync::Arc;
 pub enum Progress {
     Init { total: usize },
     Start { name: String },
-    Done,
+    Update { name: String, fraction: f32 },
+    Done { name: String },
     Error { name: String, error: String },
 }
 

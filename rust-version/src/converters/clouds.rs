@@ -19,7 +19,7 @@ pub fn convert_clouds(
     tx: ProgressTx,
     cancel: CancelFlag,
 ) -> Result<(), String> {
-    shared::process_files(file_path, is_folder, tx, cancel, |pdf, name| {
+    shared::process_files(file_path, is_folder, tx, cancel, |pdf, name, prog_tx| {
         let out = pdf.with_file_name(format!("{name}.mp4"));
         if out.exists() {
             return Ok(());
@@ -57,21 +57,29 @@ pub fn convert_clouds(
         let strip_png = tmp_dir.join("strip.png");
         image::DynamicImage::ImageRgb8(strip).save(&strip_png).map_err(|e| format!("save strip: {e}"))?;
 
-        let ffmpeg = shared::ffmpeg_bin();
-        let preset = shared::ffmpeg_preset();
         let video_dur = 12.0 * 60.0;
+        let fps = 25.0;
+        let total_frames = (video_dur * fps) as usize;
         let vf = format!("crop={w}:{h}:x=(iw-{w})*t/{video_dur}:y=0");
-        let args: Vec<String> = vec![
-            "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(),
+        
+        let mut args: Vec<String> = vec![
+            "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(), "-stats".into(),
             "-loop".into(), "1".into(), "-i".into(), strip_png.to_string_lossy().to_string(),
             "-vf".into(), vf, "-t".into(), video_dur.to_string(),
-            "-r".into(), "25".into(), "-c:v".into(), "libx264".into(),
-            "-preset".into(), preset, "-pix_fmt".into(), "yuv420p".into(),
-            // Add -threads 1 to avoid thrashing CPU when running many parallel ffmpegs
-            "-threads".into(), "1".into(),
-            out.to_string_lossy().to_string(),
+            "-r".into(), fps.to_string(), "-c:v".into(), "libx264".into(),
+            "-preset".into(), "ultrafast".into(), "-pix_fmt".into(), "yuv420p".into(),
         ];
-        shared::run_cmd(&ffmpeg, &args)?;
+        
+        // Optimize threads: if batch processing, limit ffmpeg to avoid CPU thrashing.
+        // If single file, let ffmpeg use all cores (defaults to optimal) so it's super fast.
+        if is_folder {
+            args.push("-threads".into());
+            args.push("2".into());
+        }
+        
+        args.push(out.to_string_lossy().to_string());
+        
+        shared::run_ffmpeg(&args, Some(total_frames), prog_tx, name)?;
 
         let _ = fs::remove_dir_all(&tmp_dir);
         Ok(())

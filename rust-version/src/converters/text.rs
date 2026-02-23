@@ -19,7 +19,7 @@ pub fn convert_text(
     let font_data = fs::read(font_path).map_err(|e| e.to_string())?;
     let font = Font::try_from_vec(font_data).ok_or("Failed to load font")?;
 
-    shared::process_files(file_path, is_folder, tx, cancel, |pdf, name| {
+    shared::process_files(file_path, is_folder, tx, cancel, |pdf, name, prog_tx| {
         let out = pdf.with_file_name(format!("{name}.mp4"));
         if out.exists() {
             return Ok(());
@@ -54,6 +54,7 @@ pub fn convert_text(
         let total_text_w: f32 = chunks.iter().map(|c| measure(c)).sum();
         let total_scroll_px = total_text_w + frame_w as f32;
         let duration = (total_scroll_px / speed_px_per_sec).max(1.0);
+        let total_frames = (duration * fps) as usize;
 
         let strip_w = (frame_w as f32 + total_text_w + frame_w as f32).ceil() as u32;
         let mut strip = RgbImage::new(strip_w, frame_h);
@@ -71,19 +72,22 @@ pub fn convert_text(
         let strip_png = tmp_dir.join("text_strip.png");
         image::DynamicImage::ImageRgb8(strip).save(&strip_png).map_err(|e| format!("save strip: {e}"))?;
 
-        let ffmpeg = shared::ffmpeg_bin();
-        let preset = shared::ffmpeg_preset();
         let vf = format!("crop={frame_w}:{frame_h}:x=(iw-{frame_w})*t/{duration}:y=0");
-        let args: Vec<String> = vec![
-            "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(),
+        let mut args: Vec<String> = vec![
+            "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(), "-stats".into(),
             "-loop".into(), "1".into(), "-i".into(), strip_png.to_string_lossy().to_string(),
             "-vf".into(), vf, "-t".into(), duration.to_string(),
             "-r".into(), fps.to_string(), "-c:v".into(), "libx264".into(),
-            "-preset".into(), preset, "-pix_fmt".into(), "yuv420p".into(),
-            "-threads".into(), "1".into(),
-            out.to_string_lossy().to_string(),
+            "-preset".into(), "ultrafast".into(), "-pix_fmt".into(), "yuv420p".into(),
         ];
-        shared::run_cmd(&ffmpeg, &args)?;
+        
+        if is_folder {
+            args.push("-threads".into());
+            args.push("2".into());
+        }
+        args.push(out.to_string_lossy().to_string());
+
+        shared::run_ffmpeg(&args, Some(total_frames), prog_tx, name)?;
 
         let _ = fs::remove_dir_all(&tmp_dir);
         Ok(())
