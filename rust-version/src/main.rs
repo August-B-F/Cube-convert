@@ -87,13 +87,11 @@ impl eframe::App for CubeConvertApp {
                     Progress::Done { name } => {
                         self.progress_current += 1;
                         self.file_fractions.remove(&name);
-                        // Clear current file display if it was the one finishing
                         if self.current_file == name {
                             self.current_file.clear();
                         }
                     }
                     Progress::Error { name, error } => {
-                        // Don't increment progress_current if batch error
                         if name != "Batch" {
                             self.progress_current += 1;
                             self.file_fractions.remove(&name);
@@ -193,22 +191,29 @@ impl eframe::App for CubeConvertApp {
 
             if self.is_converting {
                 ui.add_space(10.0);
-                
-                // Calculate interpolated progress
+
                 let fraction_sum: f32 = self.file_fractions.values().sum();
                 let progress = if self.progress_total > 0 {
                     (self.progress_current as f32 + fraction_sum) / self.progress_total as f32
                 } else {
                     0.0
                 };
-                
+                let progress = progress.clamp(0.0, 1.0);
+
+                // Single file: show percentage. Folder: show X/Y files done.
+                let bar_label = if !self.is_folder {
+                    format!("{}%", (progress * 100.0).round() as u32)
+                } else {
+                    format!("{}/{} files done", self.progress_current, self.progress_total)
+                };
+
                 ui.add(
-                    egui::ProgressBar::new(progress.clamp(0.0, 1.0))
-                        .text(format!("{}/{} files done", self.progress_current, self.progress_total))
-                        .animate(self.is_folder), // Only animate if folder
+                    egui::ProgressBar::new(progress)
+                        .text(bar_label)
+                        .animate(self.is_folder),
                 );
-                
-                if !self.current_file.is_empty() {
+
+                if !self.current_file.is_empty() && self.is_folder {
                     ui.label(format!("Processing: {}", self.current_file));
                 }
             }
