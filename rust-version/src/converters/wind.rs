@@ -92,11 +92,9 @@ pub fn convert_wind(
             w.finalize().map_err(|e| e.to_string())?;
         }
 
-        // Just mark 50% progress since we are about to encode
         let _ = prog_tx.send(super::Progress::Update { name: name.to_string(), fraction: 0.5 });
 
-        let ffmpeg = shared::ffmpeg_bin();
-        // Use -stats to allow run_ffmpeg to work (though we pass None frames, it just runs)
+        // Removed unused `ffmpeg` variable, simplified args
         let args: Vec<String> = vec![
             "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(), "-stats".into(),
             "-i".into(), tmp.to_string_lossy().to_string(),

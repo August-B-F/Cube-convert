@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{CancelFlag, Progress, ProgressTx};
@@ -14,6 +15,10 @@ pub fn ffmpeg_bin() -> String {
 
 pub fn pdftoppm_bin() -> String {
     std::env::var("CUBE_PDFTOPPM").unwrap_or_else(|_| "pdftoppm".to_string())
+}
+
+pub fn ffmpeg_preset() -> String {
+    std::env::var("CUBE_FFMPEG_PRESET").unwrap_or_else(|_| "ultrafast".to_string())
 }
 
 pub fn pdf_render_dpi() -> u32 {

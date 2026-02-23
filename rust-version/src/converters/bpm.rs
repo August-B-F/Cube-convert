@@ -46,6 +46,7 @@ pub fn convert_bpm(
             let mut w = hound::WavWriter::create(&tmp, spec)
                 .map_err(|e| format!("create {}: {e}", tmp.display()))?;
             let mut written = 0usize;
+            // Removed 'mut' from write_n
             let mut write_n = |w: &mut hound::WavWriter<_>, sample: i16, n: usize, written: &mut usize| -> Result<(), String> {
                 for _ in 0..n {
                     if *written >= twelve_min_samples { break; }
@@ -77,7 +78,6 @@ pub fn convert_bpm(
 
         let _ = prog_tx.send(super::Progress::Update { name: name.to_string(), fraction: 0.5 });
 
-        let ffmpeg = shared::ffmpeg_bin();
         let preset = shared::ffmpeg_preset();
         let args: Vec<String> = vec![
             "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(), "-stats".into(),
