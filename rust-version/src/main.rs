@@ -1,9 +1,12 @@
+#![windows_subsystem = "windows"]
+
 use eframe::egui;
 use rfd::FileDialog;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::thread;
 use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
+use std::fs;
 
 mod converters;
 use converters::Progress;
@@ -15,6 +18,7 @@ enum ConversionType {
     Clouds,
     Rgb,
     Text,
+    Slideshow,
 }
 
 enum AppMessage {
@@ -28,6 +32,7 @@ struct CubeConvertApp {
     is_folder: bool,
     is_converting: bool,
     rgb_color: [u8; 3],
+    color_history: Vec<[u8; 3]>,
     status_msg: String,
 
     // Progress state
@@ -45,12 +50,40 @@ struct CubeConvertApp {
 impl Default for CubeConvertApp {
     fn default() -> Self {
         let (tx, rx) = crossbeam_channel::unbounded();
+        
+        let mut color_history = Vec::new();
+        let mut rgb_color = [255, 255, 255];
+        if let Ok(data) = fs::read_to_string("cube_settings.json") {
+            // simple parse to avoid pulling in serde just for this
+            let cleaned = data.replace("[", "").replace("]", "").replace(" ", "").replace("\n", "");
+            let parts: Vec<&str> = cleaned.split(',').collect();
+            if parts.len() >= 3 {
+                rgb_color[0] = parts[0].parse().unwrap_or(255);
+                rgb_color[1] = parts[1].parse().unwrap_or(255);
+                rgb_color[2] = parts[2].parse().unwrap_or(255);
+                
+                let mut i = 3;
+                while i + 2 < parts.len() && color_history.len() < 5 {
+                    color_history.push([
+                        parts[i].parse().unwrap_or(255),
+                        parts[i+1].parse().unwrap_or(255),
+                        parts[i+2].parse().unwrap_or(255),
+                    ]);
+                    i += 3;
+                }
+            }
+        }
+        if color_history.is_empty() {
+            color_history = vec![[255, 255, 255], [255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 255, 0]];
+        }
+
         Self {
             selected_tab: ConversionType::Wind,
             selected_path: None,
             is_folder: false,
             is_converting: false,
-            rgb_color: [255, 255, 255],
+            rgb_color,
+            color_history,
             status_msg: String::new(),
             progress_current: 0,
             progress_total: 0,
@@ -60,6 +93,17 @@ impl Default for CubeConvertApp {
             rx,
             cancel_flag: Arc::new(AtomicBool::new(false)),
         }
+    }
+}
+
+impl CubeConvertApp {
+    fn save_settings(&self) {
+        let mut out = String::new();
+        out.push_str(&format!("[{},{},{}]", self.rgb_color[0], self.rgb_color[1], self.rgb_color[2]));
+        for c in &self.color_history {
+            out.push_str(&format!(",\n[{},{},{}]", c[0], c[1], c[2]));
+        }
+        let _ = fs::write("cube_settings.json", format!("[{}]", out));
     }
 }
 
@@ -123,16 +167,18 @@ impl eframe::App for CubeConvertApp {
                     ui.selectable_value(&mut self.selected_tab, ConversionType::Clouds, "CLOUDS");
                     ui.selectable_value(&mut self.selected_tab, ConversionType::Rgb, "RGB");
                     ui.selectable_value(&mut self.selected_tab, ConversionType::Text, "TEXT");
+                    ui.selectable_value(&mut self.selected_tab, ConversionType::Slideshow, "SLIDESHOW");
                 });
             });
             ui.separator();
 
             let desc = match self.selected_tab {
-                ConversionType::Wind   => "Convert wind intensities (PDF) -> MP3",
-                ConversionType::Bpm    => "Convert BPM data (PDF) -> MP3",
-                ConversionType::Clouds => "Convert cloud images (PDF) -> scrolling MP4",
-                ConversionType::Rgb    => "Convert RGB values (PDF) -> gradient MP4",
-                ConversionType::Text   => "Convert text (PDF) -> scrolling text MP4",
+                ConversionType::Wind      => "Convert wind intensities (PDF) -> MP3",
+                ConversionType::Bpm       => "Convert BPM data (PDF) -> MP3",
+                ConversionType::Clouds    => "Convert clouds (PDF or Folder of Images) -> scrolling MP4",
+                ConversionType::Rgb       => "Convert RGB values (PDF) -> gradient MP4",
+                ConversionType::Text      => "Convert text (PDF) -> scrolling text MP4",
+                ConversionType::Slideshow => "Convert folder of images -> 4s per drawing Slideshow MP4",
             };
             ui.label(desc);
             ui.add_space(16.0);
@@ -168,7 +214,27 @@ impl eframe::App for CubeConvertApp {
                 ui.add_enabled_ui(!self.is_converting, |ui| {
                     ui.horizontal(|ui| {
                         ui.label("Text Color:");
-                        ui.color_edit_button_srgb(&mut self.rgb_color);
+                        if ui.color_edit_button_srgb(&mut self.rgb_color).changed() {
+                            // Only update history when color is different from top
+                            if !self.color_history.is_empty() && self.color_history[0] != self.rgb_color {
+                                self.color_history.insert(0, self.rgb_color);
+                                self.color_history.truncate(5);
+                                self.save_settings();
+                            }
+                        }
+                    });
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label("Recent:");
+                        for color in self.color_history.clone() {
+                            let (r, g, b) = (color[0], color[1], color[2]);
+                            let color32 = egui::Color32::from_rgb(r, g, b);
+                            let button = egui::Button::new("  ").fill(color32);
+                            if ui.add(button).clicked() {
+                                self.rgb_color = color;
+                                self.save_settings();
+                            }
+                        }
                     });
                 });
             }
@@ -200,20 +266,20 @@ impl eframe::App for CubeConvertApp {
                 };
                 let progress = progress.clamp(0.0, 1.0);
 
-                // Single file: show percentage. Folder: show X/Y files done.
-                let bar_label = if !self.is_folder {
-                    format!("{}%", (progress * 100.0).round() as u32)
-                } else {
+                // Show X/Y only if it's a batch of multiple files (e.g. not a single folder process like slideshow)
+                let bar_label = if self.progress_total > 1 {
                     format!("{}/{} files done", self.progress_current, self.progress_total)
+                } else {
+                    format!("{}%", (progress * 100.0).round() as u32)
                 };
 
                 ui.add(
                     egui::ProgressBar::new(progress)
                         .text(bar_label)
-                        .animate(self.is_folder),
+                        .animate(self.is_folder && self.progress_total > 1),
                 );
 
-                if !self.current_file.is_empty() && self.is_folder {
+                if !self.current_file.is_empty() && self.progress_total > 1 {
                     ui.label(format!("Processing: {}", self.current_file));
                 }
             }
@@ -251,11 +317,12 @@ impl CubeConvertApp {
         let path = self.selected_path.clone().unwrap();
         let is_folder = self.is_folder;
         let tab = match self.selected_tab {
-            ConversionType::Wind   => 0,
-            ConversionType::Bpm    => 1,
-            ConversionType::Clouds => 2,
-            ConversionType::Rgb    => 3,
-            ConversionType::Text   => 4,
+            ConversionType::Wind      => 0,
+            ConversionType::Bpm       => 1,
+            ConversionType::Clouds    => 2,
+            ConversionType::Rgb       => 3,
+            ConversionType::Text      => 4,
+            ConversionType::Slideshow => 5,
         };
         let color = self.rgb_color;
 
@@ -278,6 +345,7 @@ impl CubeConvertApp {
                 2 => converters::convert_clouds(&path, is_folder, prog_tx.clone(), cancel),
                 3 => converters::convert_rgb(&path, is_folder, prog_tx.clone(), cancel),
                 4 => converters::convert_text(&path, is_folder, color, prog_tx.clone(), cancel),
+                5 => converters::convert_slideshow(&path, is_folder, prog_tx.clone(), cancel),
                 _ => Err("Unknown mode".into()),
             };
 
@@ -296,7 +364,7 @@ impl CubeConvertApp {
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([600.0, 400.0]),
+        viewport: egui::ViewportBuilder::default().with_inner_size([600.0, 420.0]),
         ..Default::default()
     };
     eframe::run_native(

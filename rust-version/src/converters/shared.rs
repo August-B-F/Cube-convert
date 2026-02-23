@@ -7,6 +7,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use super::{CancelFlag, Progress, ProgressTx};
 
 pub fn ffmpeg_bin() -> String {
@@ -116,15 +119,18 @@ pub fn make_temp_dir(tag: &str) -> Result<PathBuf, String> {
 }
 
 pub fn run_cmd(program: &str, args: &[String]) -> Result<(), String> {
-    let status = Command::new(program)
-        .args(args)
-        .status()
-        .map_err(|e| {
-            format!(
-                "failed to spawn '{program}': {e} (os error {}). Hint: install it.",
-                e.raw_os_error().unwrap_or(-1)
-            )
-        })?;
+    let mut cmd = Command::new(program);
+    cmd.args(args);
+    
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW to hide console flashes
+
+    let status = cmd.status().map_err(|e| {
+        format!(
+            "failed to spawn '{program}': {e} (os error {}). Hint: install it.",
+            e.raw_os_error().unwrap_or(-1)
+        )
+    })?;
 
     if status.success() {
         Ok(())
@@ -142,12 +148,13 @@ pub fn run_ffmpeg(
     use std::io::{BufRead, BufReader};
 
     let program = ffmpeg_bin();
-    let mut child = Command::new(&program)
-        .args(args)
-        .stderr(Stdio::piped())
-        .stdout(Stdio::null())
-        .spawn()
-        .map_err(|e| format!("failed to spawn '{program}': {e}"))?;
+    let mut cmd = Command::new(&program);
+    cmd.args(args).stderr(Stdio::piped()).stdout(Stdio::null());
+
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+
+    let mut child = cmd.spawn().map_err(|e| format!("failed to spawn '{program}': {e}"))?;
 
     if let Some(stderr) = child.stderr.take() {
         let reader = BufReader::new(stderr);
