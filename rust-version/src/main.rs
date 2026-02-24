@@ -165,6 +165,7 @@ impl CubeConvertApp {
 
         // Fix for white backgrounds: explicitly set widget backgrounds to COLOR_BG
         visuals.widgets.noninteractive.bg_fill = COLOR_BG;
+        visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(2.0, COLOR_TEXT);
         visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(2.0, COLOR_TEXT);
         
         visuals.widgets.inactive.bg_fill = COLOR_BG;
@@ -282,7 +283,7 @@ impl eframe::App for CubeConvertApp {
                     ui.add_space(20.0);
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("[ OK ]").clicked() {
+                            if ui.add(egui::Button::new("[ OK ]").fill(COLOR_BG)).clicked() {
                                 self.show_error_popup = false;
                             }
                         });
@@ -369,6 +370,14 @@ impl eframe::App for CubeConvertApp {
         egui::TopBottomPanel::bottom("execution_panel")
             .frame(egui::Frame::none().inner_margin(egui::Margin::symmetric(24.0, 16.0)).fill(COLOR_BG))
             .show(ctx, |ui| {
+            // Manually draw a thick top border for the panel to cleanly separate it from the content
+            let rect = ui.max_rect();
+            ui.painter().hline(
+                rect.min.x..=rect.max.x,
+                ui.cursor().top() - 16.0,
+                egui::Stroke::new(2.0, COLOR_TEXT),
+            );
+
             // Bottom execution area
             ui.horizontal(|ui| {
                 // Status & Progress line left aligned
@@ -410,21 +419,21 @@ impl eframe::App for CubeConvertApp {
                                 format!("{:02}%", percentage)
                             };
 
-                            // Draw text in middle of progress bar with contrasting color
+                            // Draw text in middle of progress bar with contrasting background badge
                             let text_pos = rect.center();
-                            
-                            // Render text twice for shadow/contrast effect
-                            ui.painter().text(
-                                text_pos + egui::vec2(1.0, 1.0),
-                                egui::Align2::CENTER_CENTER,
-                                &prog_text,
+                            let galley = ui.painter().layout_no_wrap(
+                                prog_text.clone(),
                                 egui::FontId::proportional(16.0),
-                                COLOR_BG,
+                                COLOR_TEXT,
                             );
+                            let text_bg_rect = egui::Rect::from_center_size(text_pos, galley.size()).expand(4.0);
+                            
+                            ui.painter().rect_filled(text_bg_rect, 0.0, COLOR_BG);
+                            ui.painter().rect_stroke(text_bg_rect, 0.0, egui::Stroke::new(2.0, COLOR_TEXT));
                             ui.painter().text(
                                 text_pos,
                                 egui::Align2::CENTER_CENTER,
-                                &prog_text,
+                                prog_text,
                                 egui::FontId::proportional(16.0),
                                 COLOR_TEXT,
                             );
@@ -440,7 +449,7 @@ impl eframe::App for CubeConvertApp {
                         if self.status_msg == "Done." {
                             ui.label(egui::RichText::new("> PROCESS COMPLETE.").color(COLOR_TEXT).strong().size(16.0));
                             ui.add_space(10.0);
-                            if ui.button("[ OPEN DIR ]").clicked() {
+                            if ui.add(egui::Button::new("[ OPEN DIR ]").fill(COLOR_BG)).clicked() {
                                 if let Some(path) = &self.selected_path {
                                     let dir = if self.is_folder {
                                         path.clone()
@@ -471,13 +480,13 @@ impl eframe::App for CubeConvertApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if !self.is_converting {
                         // Standard button, not filling width
-                        let btn_text = egui::RichText::new("EXECUTE").size(18.0).strong();
-                        if ui.add_enabled(self.selected_path.is_some(), egui::Button::new(btn_text).min_size(egui::vec2(120.0, 40.0))).clicked() {
+                        let btn_text = egui::RichText::new("EXECUTE").size(18.0).strong().color(COLOR_TEXT);
+                        if ui.add_enabled(self.selected_path.is_some(), egui::Button::new(btn_text).fill(COLOR_BG).min_size(egui::vec2(120.0, 40.0))).clicked() {
                             self.start_conversion(ctx.clone());
                         }
                     } else {
-                        let btn_text = egui::RichText::new("ABORT").size(18.0).strong();
-                        if ui.add(egui::Button::new(btn_text).min_size(egui::vec2(120.0, 40.0))).clicked() {
+                        let btn_text = egui::RichText::new("ABORT").size(18.0).strong().color(COLOR_TEXT);
+                        if ui.add(egui::Button::new(btn_text).fill(COLOR_BG).min_size(egui::vec2(120.0, 40.0))).clicked() {
                             self.cancel_flag.store(true, Ordering::Relaxed);
                             self.status_msg = "ABORTING...".to_string();
                         }
@@ -516,7 +525,7 @@ impl eframe::App for CubeConvertApp {
                 ui.cursor().top() - 2.0,
                 egui::Stroke::new(2.0, COLOR_TEXT),
             );
-            ui.add_space(24.0);
+            ui.add_space(16.0);
 
             let desc = match self.selected_tab {
                 ConversionType::Wind      => "Convert wind intensities (PDF) -> MP3",
@@ -537,13 +546,13 @@ impl eframe::App for CubeConvertApp {
             });
             ctx.request_repaint(); // Keep repainting for the typing effect
             
-            ui.add_space(32.0);
+            ui.add_space(16.0);
 
             // Input Area
             ui.horizontal(|ui| {
                  ui.add_space(24.0); // Consistent left margin
                  ui.add_enabled_ui(!self.is_converting, |ui| {
-                    if ui.button("[ SELECT FILE ]").clicked() {
+                    if ui.add(egui::Button::new("[ SELECT FILE ]").fill(COLOR_BG)).clicked() {
                         let mut dialog = FileDialog::new().add_filter("PDF", &["pdf"]);
                         if let Some(dir) = &self.last_dir { dialog = dialog.set_directory(dir); }
                         if let Some(path) = dialog.pick_file() {
@@ -555,7 +564,7 @@ impl eframe::App for CubeConvertApp {
                         }
                     }
                     ui.add_space(16.0);
-                    if ui.button("[ SELECT FOLDER ]").clicked() {
+                    if ui.add(egui::Button::new("[ SELECT FOLDER ]").fill(COLOR_BG)).clicked() {
                         let mut dialog = FileDialog::new();
                         if let Some(dir) = &self.last_dir { dialog = dialog.set_directory(dir); }
                         if let Some(path) = dialog.pick_folder() {
