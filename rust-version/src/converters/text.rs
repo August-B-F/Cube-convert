@@ -29,6 +29,11 @@ pub fn convert_text(
         let mut cleaned = String::with_capacity(text_raw.len());
         let mut last_was_space = false;
         for c in text_raw.chars() {
+            // CRITICAL: FFmpeg's drawtext filter uses C-strings internally. 
+            // If the PDF text contains a hidden null byte (\0), FFmpeg will immediately 
+            // truncate the text at that exact byte.
+            if c == '\0' { continue; }
+            
             if c.is_whitespace() {
                 if !last_was_space {
                     cleaned.push(' ');
@@ -51,7 +56,6 @@ pub fn convert_text(
         let font_size_px = (frame_h as f32 * 0.6).round() as u32;
         let scale = Scale::uniform(font_size_px as f32);
 
-        // Measure the text width using rusttype
         let mut total_text_w = 0.0f32;
         let mut last = None;
         for ch in text.chars() {
@@ -61,12 +65,6 @@ pub fn convert_text(
             last = Some(g.id());
         }
 
-        // Rusttype's advance width measurements are consistently narrower than what 
-        // FFmpeg's FreeType renderer actually draws due to hinting and pixel rounding.
-        // Instead of guessing by how much, we follow the user's formula:
-        //   total scroll = measured_text_w + (screen_width * 2)
-        // The extra screen_width on the right covers text still entering.
-        // The extra screen_width on the left ensures it fully exits before the video ends.
         let total_scroll_px = total_text_w + (frame_w as f32 * 2.0);
         let total_frames = (total_scroll_px / speed_px_per_frame as f32).ceil() as usize;
         let duration = total_frames as f32 / fps;

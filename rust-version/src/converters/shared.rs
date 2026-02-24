@@ -42,6 +42,7 @@ pub fn extract_text(pdf_path: &Path) -> Result<String, String> {
     // Poppler's pdftotext almost never drops pages unlike the rust pdf_extract crate.
     let program = pdftotext_bin();
     let mut cmd = Command::new(&program);
+    cmd.arg("-enc").arg("UTF-8"); // Force UTF-8 output to prevent byte translation errors
     cmd.arg("-layout");
     cmd.arg(pdf_path);
     cmd.arg("-");
@@ -50,15 +51,16 @@ pub fn extract_text(pdf_path: &Path) -> Result<String, String> {
 
     if let Ok(output) = cmd.output() {
         if output.status.success() {
-            if let Ok(text) = String::from_utf8(output.stdout) {
-                if !text.trim().is_empty() {
-                    return Ok(text);
-                }
+            // Use from_utf8_lossy instead of from_utf8 so that a single weird character (like a smart quote)
+            // won't cause the entire text extraction to fail and fallback to the broken pdf_extract crate.
+            let text = String::from_utf8_lossy(&output.stdout).into_owned();
+            if !text.trim().is_empty() {
+                return Ok(text);
             }
         }
     }
 
-    // Fallback to pdf_extract crate if pdftotext is missing or fails
+    // Fallback to pdf_extract crate if pdftotext is missing
     let bytes = fs::read(pdf_path).map_err(|e| format!("read {}: {e}", pdf_path.display()))?;
     pdf_extract::extract_text_from_mem(&bytes)
         .map_err(|e| format!("pdf_extract failed for {}: {e}", pdf_path.display()))
