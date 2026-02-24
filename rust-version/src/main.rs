@@ -160,6 +160,9 @@ impl eframe::App for CubeConvertApp {
             }
         });
 
+        // Smooth fade-in for the drag & drop overlay
+        let overlay_alpha = ctx.animate_bool(egui::Id::new("drop_overlay_anim"), is_hovering_file);
+
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 AppMessage::Progress(p) => match p {
@@ -343,11 +346,14 @@ impl eframe::App for CubeConvertApp {
                     format!("{}%", (progress * 100.0).round() as u32)
                 };
 
-                ui.add(
-                    egui::ProgressBar::new(progress)
-                        .text(bar_label)
-                        .animate(self.is_folder && self.progress_total > 1),
-                );
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.add(
+                        egui::ProgressBar::new(progress)
+                            .text(bar_label)
+                            .animate(true),
+                    );
+                });
 
                 if !self.current_file.is_empty() && self.progress_total > 1 {
                     ui.label(format!("Processing: {}", self.current_file));
@@ -384,17 +390,28 @@ impl eframe::App for CubeConvertApp {
             }
         });
 
-        if is_hovering_file {
+        // Draw animated drag & drop overlay
+        if overlay_alpha > 0.0 {
             let rect = ctx.screen_rect();
             let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("drop_overlay")));
-            painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(200));
+            
+            // Faded black background
+            painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha((200.0 * overlay_alpha) as u8));
+            
+            // Bobbing animation for the text
+            let time = ctx.input(|i| i.time);
+            let y_offset = (time * 5.0).sin() as f32 * 10.0 * overlay_alpha;
+            
             painter.text(
-                rect.center(),
+                rect.center() + egui::vec2(0.0, y_offset),
                 egui::Align2::CENTER_CENTER,
                 "📥 Drop File or Folder Here",
                 egui::FontId::proportional(32.0),
-                egui::Color32::WHITE,
+                egui::Color32::from_white_alpha((255.0 * overlay_alpha) as u8),
             );
+            
+            // Constantly repaint while visible to keep the animation smooth
+            ctx.request_repaint(); 
         }
 
         if self.is_converting {
