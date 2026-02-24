@@ -21,6 +21,10 @@ pub fn pdftoppm_bin() -> String {
     std::env::var("CUBE_PDFTOPPM").unwrap_or_else(|_| "pdftoppm".to_string())
 }
 
+pub fn pdftotext_bin() -> String {
+    std::env::var("CUBE_PDFTOTEXT").unwrap_or_else(|_| "pdftotext".to_string())
+}
+
 pub fn ffmpeg_preset() -> String {
     std::env::var("CUBE_FFMPEG_PRESET").unwrap_or_else(|_| "ultrafast".to_string())
 }
@@ -34,6 +38,27 @@ pub fn pdf_render_dpi() -> u32 {
 }
 
 pub fn extract_text(pdf_path: &Path) -> Result<String, String> {
+    // Try using pdftotext CLI first (much more reliable for large/complex PDFs)
+    // Poppler's pdftotext almost never drops pages unlike the rust pdf_extract crate.
+    let program = pdftotext_bin();
+    let mut cmd = Command::new(&program);
+    cmd.arg("-layout");
+    cmd.arg(pdf_path);
+    cmd.arg("-");
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000);
+
+    if let Ok(output) = cmd.output() {
+        if output.status.success() {
+            if let Ok(text) = String::from_utf8(output.stdout) {
+                if !text.trim().is_empty() {
+                    return Ok(text);
+                }
+            }
+        }
+    }
+
+    // Fallback to pdf_extract crate if pdftotext is missing or fails
     let bytes = fs::read(pdf_path).map_err(|e| format!("read {}: {e}", pdf_path.display()))?;
     pdf_extract::extract_text_from_mem(&bytes)
         .map_err(|e| format!("pdf_extract failed for {}: {e}", pdf_path.display()))
@@ -88,7 +113,7 @@ where
                 let _ = tx.send(Progress::Done { name: stem });
             }
             Err(e) => {
-                if !cancel.load(Ordering::Relaxed) {
+                if !cancel.load(Ordering::Relaxed) && e != "Cancelled." {
                     let _ = tx.send(Progress::Error {
                         name: stem,
                         error: e,

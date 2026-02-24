@@ -128,16 +128,21 @@ impl eframe::App for CubeConvertApp {
 
         // Render Error Popup if needed
         if self.show_error_popup {
-            egui::Window::new(egui::RichText::new("Error").color(egui::Color32::RED))
+            egui::Window::new(egui::RichText::new("Error").color(egui::Color32::RED).size(16.0))
                 .collapsible(false)
-                .resizable(false)
+                .resizable(true)
+                .min_width(350.0)
+                .min_height(100.0)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
-                    ui.label(&self.popup_error_msg);
-                    ui.add_space(10.0);
-                    if ui.button("OK").clicked() {
-                        self.show_error_popup = false;
-                    }
+                    ui.add_space(8.0);
+                    ui.label(egui::RichText::new(&self.popup_error_msg).size(14.0));
+                    ui.add_space(16.0);
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+                        if ui.button("OK").clicked() {
+                            self.show_error_popup = false;
+                        }
+                    });
                 });
         }
 
@@ -190,9 +195,15 @@ impl eframe::App for CubeConvertApp {
                             self.progress_current += 1;
                             self.file_fractions.remove(&name);
                         }
-                        self.status_msg = "An error occurred.".to_string();
-                        self.popup_error_msg = error;
-                        self.show_error_popup = true;
+                        
+                        // Prevent "Cancelled" from spawning an error popup
+                        if self.cancel_flag.load(Ordering::Relaxed) || error == "Cancelled." {
+                            self.status_msg = "Cancelled.".to_string();
+                        } else {
+                            self.status_msg = "An error occurred.".to_string();
+                            self.popup_error_msg = error;
+                            self.show_error_popup = true;
+                        }
                     }
                 },
                 AppMessage::Finished => {
@@ -266,11 +277,27 @@ impl eframe::App for CubeConvertApp {
                 });
             });
 
+            ui.add_space(8.0);
             if let Some(path) = &self.selected_path {
-                ui.label(format!("Selected: {}", path.display()));
+                ui.group(|ui| {
+                    let (icon, label) = if self.is_folder {
+                        ("📂", "Folder Selected:")
+                    } else {
+                        ("📄", "File Selected:")
+                    };
+                    
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(icon).size(18.0));
+                        ui.vertical(|ui| {
+                            ui.label(egui::RichText::new(label).strong());
+                            ui.label(path.display().to_string());
+                        });
+                    });
+                });
             } else {
-                ui.label("No file or folder selected.");
+                ui.label(egui::RichText::new("No file or folder selected.").color(egui::Color32::DARK_GRAY));
             }
+            ui.add_space(4.0);
             ui.label(egui::RichText::new("💡 Hint: You can also drag & drop files/folders here").italics().color(egui::Color32::DARK_GRAY));
 
             ui.add_space(10.0);
@@ -381,7 +408,10 @@ impl eframe::App for CubeConvertApp {
                                 let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
                             }
                         }
-                    } else if self.status_msg.starts_with("Error") || self.status_msg.starts_with("An error") || self.status_msg.starts_with("Cancelled") {
+                    } else if self.status_msg == "Cancelled." {
+                        // Yellow cancellation text
+                        ui.colored_label(egui::Color32::from_rgb(200, 200, 0), &self.status_msg);
+                    } else if self.status_msg.starts_with("Error") || self.status_msg.starts_with("An error") {
                         ui.colored_label(egui::Color32::from_rgb(200, 0, 0), &self.status_msg);
                     } else {
                         ui.label(&self.status_msg);
@@ -460,20 +490,22 @@ impl CubeConvertApp {
         let tx_done = self.tx.clone();
         thread::spawn(move || {
             let result = match tab {
-                0 => converters::convert_wind(&path, is_folder, prog_tx.clone(), cancel),
-                1 => converters::convert_bpm(&path, is_folder, prog_tx.clone(), cancel),
-                2 => converters::convert_clouds(&path, is_folder, clouds_stitch, prog_tx.clone(), cancel),
-                3 => converters::convert_rgb(&path, is_folder, prog_tx.clone(), cancel),
-                4 => converters::convert_text(&path, is_folder, color, prog_tx.clone(), cancel),
-                5 => converters::convert_slideshow(&path, is_folder, prog_tx.clone(), cancel),
+                0 => converters::convert_wind(&path, is_folder, prog_tx.clone(), cancel.clone()),
+                1 => converters::convert_bpm(&path, is_folder, prog_tx.clone(), cancel.clone()),
+                2 => converters::convert_clouds(&path, is_folder, clouds_stitch, prog_tx.clone(), cancel.clone()),
+                3 => converters::convert_rgb(&path, is_folder, prog_tx.clone(), cancel.clone()),
+                4 => converters::convert_text(&path, is_folder, color, prog_tx.clone(), cancel.clone()),
+                5 => converters::convert_slideshow(&path, is_folder, prog_tx.clone(), cancel.clone()),
                 _ => Err("Unknown mode".into()),
             };
 
             if let Err(e) = result {
-                let _ = prog_tx.send(Progress::Error {
-                    name: "Batch".into(),
-                    error: e,
-                });
+                if !cancel.load(Ordering::Relaxed) && e != "Cancelled." {
+                    let _ = prog_tx.send(Progress::Error {
+                        name: "Batch".into(),
+                        error: e,
+                    });
+                }
             }
             drop(prog_tx);
             let _ = tx_done.send(AppMessage::Finished);
