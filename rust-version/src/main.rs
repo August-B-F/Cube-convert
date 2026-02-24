@@ -42,6 +42,8 @@ struct CubeConvertApp {
     color_history: Vec<[u8; 3]>,
     clouds_folder_mode: CloudsFolderMode,
     status_msg: String,
+    show_error_popup: bool,
+    popup_error_msg: String,
 
     // Progress state
     progress_current: usize,
@@ -94,6 +96,8 @@ impl Default for CubeConvertApp {
             color_history,
             clouds_folder_mode: CloudsFolderMode::StitchImages,
             status_msg: String::new(),
+            show_error_popup: false,
+            popup_error_msg: String::new(),
             progress_current: 0,
             progress_total: 0,
             file_fractions: HashMap::new(),
@@ -122,7 +126,21 @@ impl eframe::App for CubeConvertApp {
         style.spacing.button_padding = egui::vec2(12.0, 6.0);
         ctx.set_style(style);
 
-        // QOL: Drag and Drop Support
+        // Render Error Popup if needed
+        if self.show_error_popup {
+            egui::Window::new("⚠️ Error")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    ui.label(&self.popup_error_msg);
+                    ui.add_space(10.0);
+                    if ui.button("OK").clicked() {
+                        self.show_error_popup = false;
+                    }
+                });
+        }
+
         ctx.input(|i| {
             if !self.is_converting {
                 if let Some(dropped) = i.raw.dropped_files.first() {
@@ -165,7 +183,9 @@ impl eframe::App for CubeConvertApp {
                             self.progress_current += 1;
                             self.file_fractions.remove(&name);
                         }
-                        self.status_msg = format!("Error: {}", error);
+                        self.status_msg = "An error occurred.".to_string();
+                        self.popup_error_msg = error;
+                        self.show_error_popup = true;
                     }
                 },
                 AppMessage::Finished => {
@@ -238,12 +258,10 @@ impl eframe::App for CubeConvertApp {
             } else {
                 ui.label("No file or folder selected.");
             }
-            // QOL: Drag and Drop hint
             ui.label(egui::RichText::new("💡 Hint: You can also drag & drop files/folders here").italics().color(egui::Color32::DARK_GRAY));
 
             ui.add_space(10.0);
 
-            // FIX: Allow choosing whether Clouds folder is for Images or PDFs
             if self.selected_tab == ConversionType::Clouds && self.is_folder {
                 ui.add_enabled_ui(!self.is_converting, |ui| {
                     ui.label("Folder contents:");
@@ -332,7 +350,6 @@ impl eframe::App for CubeConvertApp {
                     if self.status_msg == "Done." {
                         ui.colored_label(egui::Color32::from_rgb(0, 200, 0), &self.status_msg);
                         
-                        // QOL: Open Folder Button
                         if ui.button("📂 Open Output Folder").clicked() {
                             if let Some(path) = &self.selected_path {
                                 let dir = if self.is_folder {
@@ -348,7 +365,7 @@ impl eframe::App for CubeConvertApp {
                                 let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
                             }
                         }
-                    } else if self.status_msg.starts_with("Error") || self.status_msg.starts_with("Cancelled") {
+                    } else if self.status_msg.starts_with("Error") || self.status_msg.starts_with("An error") || self.status_msg.starts_with("Cancelled") {
                         ui.colored_label(egui::Color32::from_rgb(200, 0, 0), &self.status_msg);
                     } else {
                         ui.label(&self.status_msg);
@@ -367,6 +384,7 @@ impl CubeConvertApp {
     fn start_conversion(&mut self, ctx: egui::Context) {
         self.is_converting = true;
         self.status_msg = "Starting...".to_string();
+        self.show_error_popup = false;
         self.progress_current = 0;
         self.progress_total = 0;
         self.file_fractions.clear();

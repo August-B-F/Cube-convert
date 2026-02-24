@@ -147,40 +147,59 @@ pub fn run_ffmpeg(
     total_frames: Option<usize>,
     tx: &ProgressTx,
     name: &str,
-    cancel: CancelFlag, // NEW: We now pass the cancel flag into ffmpeg runner
+    cancel: CancelFlag,
 ) -> Result<(), String> {
     use std::io::{Read, BufRead, BufReader};
     use std::sync::mpsc;
     use std::thread;
+    use std::sync::Mutex;
 
     let program = ffmpeg_bin();
     let mut cmd = Command::new(&program);
-    cmd.args(args).stderr(Stdio::piped()).stdout(Stdio::null());
+    
+    // Add -thread_queue_size to speed up startup by preventing input blocking
+    let mut opt_args = vec!["-thread_queue_size".to_string(), "512".to_string()];
+    opt_args.extend_from_slice(args);
+    
+    cmd.args(&opt_args).stderr(Stdio::piped()).stdout(Stdio::null());
 
     #[cfg(windows)]
     cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
 
     let mut child = cmd.spawn().map_err(|e| format!("failed to spawn '{program}': {e}"))?;
-    let mut stderr = child.stderr.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
     
-    // We spawn a thread to read ffmpeg's stderr because blocking on read() prevents us
-    // from checking the cancel flag frequently.
     let (err_tx, err_rx) = mpsc::channel();
+    
+    // We capture the last few lines of stderr to show the exact error if ffmpeg crashes
+    let last_error = Arc::new(Mutex::new(String::new()));
+    let last_error_clone = last_error.clone();
     
     thread::spawn(move || {
         let mut reader = BufReader::new(stderr);
         let mut buffer = Vec::new();
-        // ffmpeg uses '\r' for its progress updates
         while let Ok(bytes_read) = reader.read_until(b'\r', &mut buffer) {
-            if bytes_read == 0 { break; }
+            if bytes_read == 0 { 
+                // Read remaining to handle \n endings for error messages
+                let mut rest = String::new();
+                let _ = reader.read_to_string(&mut rest);
+                if !rest.trim().is_empty() {
+                    let mut lock = last_error_clone.lock().unwrap();
+                    *lock = rest;
+                }
+                break; 
+            }
             if let Ok(line) = String::from_utf8(buffer.clone()) {
+                if line.contains("Error") || line.contains("Invalid") || line.contains("Could not") {
+                    let mut lock = last_error_clone.lock().unwrap();
+                    *lock = line.clone();
+                }
                 let _ = err_tx.send(line);
             }
             buffer.clear();
         }
     });
 
-    // Check progress and check cancel flag simultaneously
     loop {
         if cancel.load(Ordering::Relaxed) {
             let _ = child.kill();
@@ -212,17 +231,20 @@ pub fn run_ffmpeg(
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                // Just continue checking the cancel flag
                 if let Ok(Some(status)) = child.try_wait() {
                     if status.success() {
                         return Ok(());
                     } else {
-                        return Err(format!("ffmpeg exited with {}", status));
+                        let err_msg = last_error.lock().unwrap().clone();
+                        if err_msg.is_empty() {
+                            return Err(format!("ffmpeg exited with {}", status));
+                        } else {
+                            return Err(format!("FFmpeg Error: {}", err_msg.trim()));
+                        }
                     }
                 }
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                // Thread finished reading stderr
                 break;
             }
         }
@@ -232,6 +254,11 @@ pub fn run_ffmpeg(
     if status.success() {
         Ok(())
     } else {
-        Err(format!("ffmpeg exited with {}", status))
+        let err_msg = last_error.lock().unwrap().clone();
+        if err_msg.is_empty() {
+            Err(format!("ffmpeg exited with {}", status))
+        } else {
+            Err(format!("FFmpeg Error: {}", err_msg.trim()))
+        }
     }
 }
