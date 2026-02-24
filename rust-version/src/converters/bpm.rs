@@ -47,7 +47,7 @@ pub fn convert_bpm(
             let mut w = hound::WavWriter::create(&tmp, spec)
                 .map_err(|e| format!("create {}: {e}", tmp.display()))?;
             let mut written = 0usize;
-            let mut write_n = |w: &mut hound::WavWriter<_>, sample: i16, n: usize, written: &mut usize| -> Result<(), String> {
+            let write_n = |w: &mut hound::WavWriter<_>, sample: i16, n: usize, written: &mut usize| -> Result<(), String> {
                 for _ in 0..n {
                     if *written >= twelve_min_samples { break; }
                     w.write_sample(sample).map_err(|e| e.to_string())?;
