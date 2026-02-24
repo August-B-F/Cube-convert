@@ -11,7 +11,7 @@ use std::fs;
 mod converters;
 use converters::Progress;
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Eq, Hash, Clone, Copy)]
 enum ConversionType {
     Wind,
     Bpm,
@@ -628,7 +628,7 @@ impl eframe::App for CubeConvertApp {
                             ui.horizontal(|ui| {
                                 ui.add_space(10.0);
                                 // Rotating slashes animation for processing
-                                let frames = ["|", "/", "-", "\\"];
+                                let frames = ["|", "/", "-", "\\\\"];
                                 let frame_idx = ((self.time_active * 10.0) as usize) % frames.len();
                                 ui.label(format!("{} {} ({}/{})", frames[frame_idx], self.current_file, self.progress_current, self.progress_total));
                             });
