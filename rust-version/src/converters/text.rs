@@ -52,7 +52,16 @@ pub fn convert_text(
         let speed_px_per_sec = speed_px_per_frame as f32 * fps;
         
         let font_size_px = (frame_h as f32 * 0.6).round() as u32;
-        let scale = Scale::uniform(font_size_px as f32);
+        
+        // FFmpeg's drawtext filter (FreeType) scales fonts based on the EM square.
+        // rusttype's Scale::uniform scales based on the unscaled ascent-descent height.
+        // To get exactly the same width measurements as FFmpeg, we adjust the scale:
+        let v_unscaled = font.v_metrics_unscaled();
+        let height_unscaled = v_unscaled.ascent - v_unscaled.descent;
+        let units_per_em = font.units_per_em() as f32;
+        let adjusted_scale_px = font_size_px as f32 * (height_unscaled / units_per_em);
+        
+        let scale = Scale::uniform(adjusted_scale_px);
 
         let mut total_text_w = 0.0f32;
         let mut last = None;
