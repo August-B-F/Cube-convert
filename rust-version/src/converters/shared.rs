@@ -1,9 +1,8 @@
-use crossbeam_channel::Sender;
 use rayon::prelude::*;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::time::Duration;
@@ -289,8 +288,8 @@ pub fn run_ffmpeg(
 
 pub fn run_ffmpeg_stream<F>(
     args: &[String],
-    tx: &ProgressTx,
-    name: &str,
+    _tx: &ProgressTx,
+    _name: &str,
     cancel: CancelFlag,
     mut stream_fn: F,
 ) -> Result<(), String>
