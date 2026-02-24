@@ -32,6 +32,16 @@ enum AppMessage {
     Finished,
 }
 
+// --- Custom Theme Colors ---
+// bg: 969E7B -> RGB(150, 158, 123)
+const COLOR_BG: egui::Color32 = egui::Color32::from_rgb(150, 158, 123);
+// black: 21250D -> RGB(33, 37, 13)
+const COLOR_TEXT: egui::Color32 = egui::Color32::from_rgb(33, 37, 13);
+// red: 6D4A38 -> RGB(109, 74, 56)
+const COLOR_RED: egui::Color32 = egui::Color32::from_rgb(109, 74, 56);
+// green: 3E5472 (this is blue-ish, but keeping name) -> RGB(62, 84, 114)
+const COLOR_ACCENT: egui::Color32 = egui::Color32::from_rgb(62, 84, 114);
+
 struct CubeConvertApp {
     selected_tab: ConversionType,
     selected_path: Option<PathBuf>,
@@ -118,25 +128,80 @@ impl CubeConvertApp {
         }
         let _ = fs::write("cube_settings.json", format!("[{}]", out));
     }
+
+    fn apply_retro_theme(&self, ctx: &egui::Context) {
+        // Load custom retro font
+        let mut fonts = egui::FontDefinitions::default();
+        if let Ok(font_data) = std::fs::read("assets/pixel.ttf") {
+            fonts.font_data.insert("pixel".to_owned(), egui::FontData::from_owned(font_data));
+            fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap().insert(0, "pixel".to_owned());
+            fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap().insert(0, "pixel".to_owned());
+        }
+        ctx.set_fonts(fonts);
+
+        let mut visuals = egui::Visuals::light();
+        
+        // Core colors
+        visuals.window_fill = COLOR_BG;
+        visuals.panel_fill = COLOR_BG;
+        visuals.faint_bg_color = COLOR_BG;
+        visuals.extreme_bg_color = COLOR_BG;
+        
+        // Default text color
+        visuals.override_text_color = Some(COLOR_TEXT);
+        
+        // Selection / Accent color
+        visuals.selection.bg_fill = COLOR_TEXT;
+        visuals.selection.stroke = egui::Stroke::new(1.0, COLOR_BG);
+
+        // Widgets style
+        // Normal
+        visuals.widgets.noninteractive.bg_fill = COLOR_BG;
+        visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(2.0, COLOR_TEXT);
+        
+        // Inactive (buttons)
+        visuals.widgets.inactive.bg_fill = COLOR_BG;
+        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(2.0, COLOR_TEXT);
+        visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, COLOR_TEXT);
+        visuals.widgets.inactive.rounding = egui::Rounding::same(0.0);
+
+        // Hovered
+        visuals.widgets.hovered.bg_fill = COLOR_ACCENT;
+        visuals.widgets.hovered.bg_stroke = egui::Stroke::new(2.0, COLOR_TEXT);
+        visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, COLOR_BG);
+        visuals.widgets.hovered.rounding = egui::Rounding::same(0.0);
+
+        // Active (clicked)
+        visuals.widgets.active.bg_fill = COLOR_TEXT;
+        visuals.widgets.active.bg_stroke = egui::Stroke::new(2.0, COLOR_TEXT);
+        visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, COLOR_BG);
+        visuals.widgets.active.rounding = egui::Rounding::same(0.0);
+        
+        ctx.set_visuals(visuals);
+
+        let mut style = (*ctx.style()).clone();
+        style.spacing.button_padding = egui::vec2(12.0, 8.0);
+        style.spacing.item_spacing = egui::vec2(8.0, 12.0);
+        style.spacing.window_rounding = egui::Rounding::same(0.0);
+        // Thick borders everywhere
+        style.visuals.window_stroke = egui::Stroke::new(3.0, COLOR_TEXT);
+        ctx.set_style(style);
+    }
 }
 
 impl eframe::App for CubeConvertApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        let mut style = (*ctx.style()).clone();
-        style.spacing.button_padding = egui::vec2(12.0, 6.0);
-        ctx.set_style(style);
+        self.apply_retro_theme(ctx);
 
         // Render Error Popup if needed
         if self.show_error_popup {
-            egui::Window::new(egui::RichText::new("Error").color(egui::Color32::RED).size(16.0))
+            egui::Window::new(egui::RichText::new("Error").color(COLOR_BG).background_color(COLOR_TEXT).size(16.0))
                 .collapsible(false)
-                .resizable(true)
-                .min_width(350.0)
-                .min_height(100.0)
+                .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                 .show(ctx, |ui| {
                     ui.add_space(8.0);
-                    ui.label(egui::RichText::new(&self.popup_error_msg).size(14.0));
+                    ui.label(egui::RichText::new(&self.popup_error_msg).color(COLOR_RED).size(14.0));
                     ui.add_space(16.0);
                     ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
                         if ui.button("OK").clicked() {
@@ -221,17 +286,22 @@ impl eframe::App for CubeConvertApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.add_space(8.0);
+            // Custom Title Header
+            ui.vertical_centered(|ui| {
+                ui.heading(egui::RichText::new("RETRO UI CONVERTER").size(32.0).strong());
+                ui.add_space(8.0);
+            });
 
             ui.add_enabled_ui(!self.is_converting, |ui| {
                 let mut tab_changed = false;
                 ui.horizontal(|ui| {
+                    // Custom Tab buttons to mimic retro style
                     if ui.selectable_value(&mut self.selected_tab, ConversionType::Wind, "WIND").changed() { tab_changed = true; }
                     if ui.selectable_value(&mut self.selected_tab, ConversionType::Bpm, "BPM").changed() { tab_changed = true; }
                     if ui.selectable_value(&mut self.selected_tab, ConversionType::Clouds, "CLOUDS").changed() { tab_changed = true; }
                     if ui.selectable_value(&mut self.selected_tab, ConversionType::Rgb, "RGB").changed() { tab_changed = true; }
                     if ui.selectable_value(&mut self.selected_tab, ConversionType::Text, "TEXT").changed() { tab_changed = true; }
-                    if ui.selectable_value(&mut self.selected_tab, ConversionType::Slideshow, "SLIDESHOW").changed() { tab_changed = true; }
+                    if ui.selectable_value(&mut self.selected_tab, ConversionType::Slideshow, "SLIDE").changed() { tab_changed = true; }
                 });
 
                 if tab_changed {
@@ -239,7 +309,15 @@ impl eframe::App for CubeConvertApp {
                     self.show_error_popup = false;
                 }
             });
-            ui.separator();
+
+            // Retro thick separator
+            let rect = ui.max_rect();
+            ui.painter().hline(
+                rect.min.x..=rect.max.x,
+                ui.cursor().top() + 4.0,
+                egui::Stroke::new(2.0, COLOR_TEXT),
+            );
+            ui.add_space(16.0);
 
             let desc = match self.selected_tab {
                 ConversionType::Wind      => "Convert wind intensities (PDF) -> MP3",
@@ -247,177 +325,200 @@ impl eframe::App for CubeConvertApp {
                 ConversionType::Clouds    => "Convert clouds (PDF) -> scrolling MP4",
                 ConversionType::Rgb       => "Convert RGB values (PDF) -> gradient MP4",
                 ConversionType::Text      => "Convert text (PDF) -> scrolling text MP4",
-                ConversionType::Slideshow => "Convert folder of images -> 4s per drawing Slideshow MP4",
+                ConversionType::Slideshow => "Folder of images -> 4s Slideshow MP4",
             };
-            ui.label(desc);
+            ui.label(egui::RichText::new(desc).size(16.0));
             ui.add_space(16.0);
 
-            ui.add_enabled_ui(!self.is_converting, |ui| {
-                ui.horizontal(|ui| {
-                    if ui.button("\u{1F4C4} Select File").clicked() {
-                        let mut dialog = FileDialog::new().add_filter("PDF", &["pdf"]);
-                        if let Some(dir) = &self.last_dir { dialog = dialog.set_directory(dir); }
-                        if let Some(path) = dialog.pick_file() {
-                            if let Some(parent) = path.parent() { self.last_dir = Some(parent.to_path_buf()); }
-                            self.selected_path = Some(path);
-                            self.is_folder = false;
-                            self.status_msg.clear();
-                        }
-                    }
-                    if ui.button("\u{1F4C1} Select Folder").clicked() {
-                        let mut dialog = FileDialog::new();
-                        if let Some(dir) = &self.last_dir { dialog = dialog.set_directory(dir); }
-                        if let Some(path) = dialog.pick_folder() {
-                            self.last_dir = Some(path.clone());
-                            self.selected_path = Some(path);
-                            self.is_folder = true;
-                            self.status_msg.clear();
-                        }
-                    }
-                });
-            });
-
-            ui.add_space(8.0);
-            if let Some(path) = &self.selected_path {
-                ui.group(|ui| {
-                    let (icon, label) = if self.is_folder {
-                        ("📂", "Folder Selected:")
-                    } else {
-                        ("📄", "File Selected:")
-                    };
-                    
+            // Input Area / Buttons
+            ui.group(|ui| {
+                ui.add_enabled_ui(!self.is_converting, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(icon).size(18.0));
-                        ui.vertical(|ui| {
-                            ui.label(egui::RichText::new(label).strong());
-                            ui.label(path.display().to_string());
+                        if ui.button("[ SELECT FILE ]").clicked() {
+                            let mut dialog = FileDialog::new().add_filter("PDF", &["pdf"]);
+                            if let Some(dir) = &self.last_dir { dialog = dialog.set_directory(dir); }
+                            if let Some(path) = dialog.pick_file() {
+                                if let Some(parent) = path.parent() { self.last_dir = Some(parent.to_path_buf()); }
+                                self.selected_path = Some(path);
+                                self.is_folder = false;
+                                self.status_msg.clear();
+                            }
+                        }
+                        if ui.button("[ SELECT FOLDER ]").clicked() {
+                            let mut dialog = FileDialog::new();
+                            if let Some(dir) = &self.last_dir { dialog = dialog.set_directory(dir); }
+                            if let Some(path) = dialog.pick_folder() {
+                                self.last_dir = Some(path.clone());
+                                self.selected_path = Some(path);
+                                self.is_folder = true;
+                                self.status_msg.clear();
+                            }
+                        }
+                    });
+                });
+
+                ui.add_space(12.0);
+
+                if let Some(path) = &self.selected_path {
+                    let prefix = if self.is_folder { "> DIR:" } else { "> FILE:" };
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(prefix).strong());
+                        // A retro-style text box display for the path
+                        egui::Frame::none()
+                            .fill(COLOR_BG)
+                            .stroke(egui::Stroke::new(2.0, COLOR_TEXT))
+                            .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                            .show(ui, |ui| {
+                                ui.label(path.display().to_string());
+                            });
+                    });
+                } else {
+                    ui.label("> NO INPUT SELECTED.");
+                }
+            });
+            
+            ui.add_space(16.0);
+
+            if self.selected_tab == ConversionType::Clouds && self.is_folder {
+                ui.group(|ui| {
+                    ui.add_enabled_ui(!self.is_converting, |ui| {
+                        ui.label("> CLOUD DIRECTORY MODE:");
+                        ui.horizontal(|ui| {
+                            ui.radio_value(&mut self.clouds_folder_mode, CloudsFolderMode::StitchImages, "[ STITCH ]");
+                            ui.radio_value(&mut self.clouds_folder_mode, CloudsFolderMode::BatchPdf, "[ BATCH ]");
                         });
                     });
                 });
-            } else {
-                ui.label(egui::RichText::new("No file or folder selected.").color(egui::Color32::DARK_GRAY));
-            }
-            ui.add_space(4.0);
-            ui.label(egui::RichText::new("💡 Hint: You can also drag & drop files/folders here").italics().color(egui::Color32::DARK_GRAY));
-
-            ui.add_space(10.0);
-
-            if self.selected_tab == ConversionType::Clouds && self.is_folder {
-                ui.add_enabled_ui(!self.is_converting, |ui| {
-                    ui.label("Folder contents:");
-                    ui.horizontal(|ui| {
-                        ui.radio_value(&mut self.clouds_folder_mode, CloudsFolderMode::StitchImages, "Images (Stitch into 1 Video)");
-                        ui.radio_value(&mut self.clouds_folder_mode, CloudsFolderMode::BatchPdf, "PDFs (Batch Convert)");
-                    });
-                });
-                ui.add_space(10.0);
+                ui.add_space(16.0);
             }
 
             if self.selected_tab == ConversionType::Text {
-                ui.add_enabled_ui(!self.is_converting, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label("Text Color:");
-                        if ui.color_edit_button_srgb(&mut self.rgb_color).changed() {
-                            if !self.color_history.is_empty() && self.color_history[0] != self.rgb_color {
-                                self.color_history.insert(0, self.rgb_color);
-                                self.color_history.truncate(5);
-                                self.save_settings();
+                ui.group(|ui| {
+                    ui.add_enabled_ui(!self.is_converting, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("> COLOR:");
+                            if ui.color_edit_button_srgb(&mut self.rgb_color).changed() {
+                                if !self.color_history.is_empty() && self.color_history[0] != self.rgb_color {
+                                    self.color_history.insert(0, self.rgb_color);
+                                    self.color_history.truncate(5);
+                                    self.save_settings();
+                                }
                             }
-                        }
-                    });
-                    ui.add_space(4.0);
-                    ui.horizontal(|ui| {
-                        ui.label("Recent:");
-                        for color in self.color_history.clone() {
-                            let (r, g, b) = (color[0], color[1], color[2]);
-                            let color32 = egui::Color32::from_rgb(r, g, b);
-                            let button = egui::Button::new("  ").fill(color32);
-                            if ui.add(button).clicked() {
-                                self.rgb_color = color;
-                                self.save_settings();
+                        });
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            ui.label("  PALETTE:");
+                            for color in self.color_history.clone() {
+                                let (r, g, b) = (color[0], color[1], color[2]);
+                                let color32 = egui::Color32::from_rgb(r, g, b);
+                                
+                                // Custom colored square buttons
+                                let (rect, response) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::click());
+                                if ui.is_rect_visible(rect) {
+                                    let stroke = if response.hovered() {
+                                        egui::Stroke::new(2.0, COLOR_BG)
+                                    } else {
+                                        egui::Stroke::new(2.0, COLOR_TEXT)
+                                    };
+                                    ui.painter().rect(rect, 0.0, color32, stroke);
+                                }
+                                
+                                if response.clicked() {
+                                    self.rgb_color = color;
+                                    self.save_settings();
+                                }
                             }
-                        }
+                        });
                     });
                 });
-                ui.add_space(10.0);
+                ui.add_space(16.0);
             }
 
-            ui.horizontal(|ui| {
-                if !self.is_converting {
-                    if ui.add_enabled(
-                        self.selected_path.is_some(),
-                        egui::Button::new("\u{25B6} Submit"),
-                    ).clicked() {
-                        self.start_conversion(ctx.clone());
-                    }
-                } else if ui.button("\u{2716} Cancel").clicked() {
-                    self.cancel_flag.store(true, Ordering::Relaxed);
-                    self.status_msg = "Cancelling...".to_string();
-                }
-            });
-
-            if self.is_converting {
-                ui.add_space(10.0);
-
-                let fraction_sum: f32 = self.file_fractions.values().sum();
-                let progress = if self.progress_total > 0 {
-                    (self.progress_current as f32 + fraction_sum) / self.progress_total as f32
-                } else {
-                    0.0
-                };
-                let progress = progress.clamp(0.0, 1.0);
-
-                let bar_label = if self.progress_total > 1 {
-                    format!("{}/{} files done", self.progress_current, self.progress_total)
-                } else {
-                    format!("{}%", (progress * 100.0).round() as u32)
-                };
-
+            // Bottom controls
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::RIGHT), |ui| {
                 ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.add(
-                        egui::ProgressBar::new(progress)
-                            .text(bar_label)
-                            .animate(true),
-                    );
-                });
-
-                if !self.current_file.is_empty() && self.progress_total > 1 {
-                    ui.label(format!("Processing: {}", self.current_file));
-                }
-            }
-
-            if !self.status_msg.is_empty() {
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    if self.status_msg == "Done." {
-                        ui.colored_label(egui::Color32::from_rgb(0, 200, 0), &self.status_msg);
-                        
-                        if ui.button("📂 Open Output Folder").clicked() {
-                            if let Some(path) = &self.selected_path {
-                                let dir = if self.is_folder {
-                                    path.clone()
-                                } else {
-                                    path.parent().unwrap_or(Path::new("")).to_path_buf()
-                                };
-                                #[cfg(target_os = "windows")]
-                                let _ = std::process::Command::new("explorer").arg(dir).spawn();
-                                #[cfg(target_os = "macos")]
-                                let _ = std::process::Command::new("open").arg(dir).spawn();
-                                #[cfg(target_os = "linux")]
-                                let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
-                            }
+                    if !self.is_converting {
+                        if ui.add_enabled(
+                            self.selected_path.is_some(),
+                            egui::Button::new("   EXECUTE   "),
+                        ).clicked() {
+                            self.start_conversion(ctx.clone());
                         }
-                    } else if self.status_msg == "Cancelled." {
-                        // Yellow cancellation text
-                        ui.colored_label(egui::Color32::from_rgb(200, 200, 0), &self.status_msg);
-                    } else if self.status_msg.starts_with("Error") || self.status_msg.starts_with("An error") {
-                        ui.colored_label(egui::Color32::from_rgb(200, 0, 0), &self.status_msg);
                     } else {
-                        ui.label(&self.status_msg);
+                        if ui.button("   ABORT   ").clicked() {
+                            self.cancel_flag.store(true, Ordering::Relaxed);
+                            self.status_msg = "ABORTING...".to_string();
+                        }
                     }
                 });
-            }
+
+                // Status line above button
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                    if self.is_converting {
+                        ui.add_space(4.0);
+                        let fraction_sum: f32 = self.file_fractions.values().sum();
+                        let progress = if self.progress_total > 0 {
+                            (self.progress_current as f32 + fraction_sum) / self.progress_total as f32
+                        } else {
+                            0.0
+                        };
+                        let progress = progress.clamp(0.0, 1.0);
+
+                        let bar_label = if self.progress_total > 1 {
+                            format!("{}/{} FILES", self.progress_current, self.progress_total)
+                        } else {
+                            format!("{}%", (progress * 100.0).round() as u32)
+                        };
+
+                        ui.horizontal(|ui| {
+                            // Retro progress bar
+                            let desired_size = egui::vec2(250.0, 20.0);
+                            let (rect, _response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
+                            
+                            ui.painter().rect_stroke(rect, 0.0, egui::Stroke::new(2.0, COLOR_TEXT));
+                            let mut fill_rect = rect;
+                            fill_rect.max.x = rect.min.x + (rect.width() * progress);
+                            ui.painter().rect_filled(fill_rect, 0.0, COLOR_TEXT);
+                            
+                            ui.label(bar_label);
+                        });
+
+                        if !self.current_file.is_empty() && self.progress_total > 1 {
+                            ui.label(format!("> {}", self.current_file));
+                        }
+                    }
+
+                    if !self.status_msg.is_empty() {
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            if self.status_msg == "Done." {
+                                ui.label(egui::RichText::new("> PROCESS COMPLETE.").color(COLOR_TEXT).strong());
+                                if ui.button("[ OPEN DIR ]").clicked() {
+                                    if let Some(path) = &self.selected_path {
+                                        let dir = if self.is_folder {
+                                            path.clone()
+                                        } else {
+                                            path.parent().unwrap_or(Path::new("")).to_path_buf()
+                                        };
+                                        #[cfg(target_os = "windows")]
+                                        let _ = std::process::Command::new("explorer").arg(dir).spawn();
+                                        #[cfg(target_os = "macos")]
+                                        let _ = std::process::Command::new("open").arg(dir).spawn();
+                                        #[cfg(target_os = "linux")]
+                                        let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+                                    }
+                                }
+                            } else if self.status_msg == "Cancelled." || self.status_msg == "ABORTING..." {
+                                ui.label(egui::RichText::new(&self.status_msg).color(COLOR_RED).strong());
+                            } else if self.status_msg.starts_with("Error") || self.status_msg.starts_with("An error") {
+                                ui.label(egui::RichText::new(&self.status_msg).color(COLOR_RED).strong());
+                            } else {
+                                ui.label(format!("> {}", self.status_msg));
+                            }
+                        });
+                    }
+                });
+            });
         });
 
         // Draw animated drag & drop overlay
@@ -425,22 +526,19 @@ impl eframe::App for CubeConvertApp {
             let rect = ctx.screen_rect();
             let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("drop_overlay")));
             
-            // Faded black background
-            painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha((200.0 * overlay_alpha) as u8));
+            painter.rect_filled(rect, 0.0, egui::Color32::from_rgba_premultiplied(150, 158, 123, (220.0 * overlay_alpha) as u8));
             
-            // Bobbing animation for the text
             let time = ctx.input(|i| i.time);
             let y_offset = (time * 5.0).sin() as f32 * 10.0 * overlay_alpha;
             
             painter.text(
                 rect.center() + egui::vec2(0.0, y_offset),
                 egui::Align2::CENTER_CENTER,
-                "📥 Drop File or Folder Here",
+                "[ DROP DATA HERE ]",
                 egui::FontId::proportional(32.0),
-                egui::Color32::from_white_alpha((255.0 * overlay_alpha) as u8),
+                COLOR_TEXT,
             );
             
-            // Constantly repaint while visible to keep the animation smooth
             ctx.request_repaint(); 
         }
 
@@ -453,7 +551,7 @@ impl eframe::App for CubeConvertApp {
 impl CubeConvertApp {
     fn start_conversion(&mut self, ctx: egui::Context) {
         self.is_converting = true;
-        self.status_msg = "Starting...".to_string();
+        self.status_msg = "INITIALIZING...".to_string();
         self.show_error_popup = false;
         self.progress_current = 0;
         self.progress_total = 0;
@@ -528,7 +626,7 @@ fn load_icon() -> Option<egui::IconData> {
 }
 
 fn main() -> eframe::Result<()> {
-    let mut viewport = egui::ViewportBuilder::default().with_inner_size([600.0, 480.0]);
+    let mut viewport = egui::ViewportBuilder::default().with_inner_size([650.0, 500.0]);
     
     if let Some(icon) = load_icon() {
         viewport = viewport.with_icon(std::sync::Arc::new(icon));
