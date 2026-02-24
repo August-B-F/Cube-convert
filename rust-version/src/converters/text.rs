@@ -34,7 +34,7 @@ pub fn convert_text(
             .chunks(chunk_size).map(|c| c.iter().collect()).collect();
 
         let frame_w = 600u32;
-        let frame_h = 225u32;
+        let frame_h = 224u32; // Must be even for libx264 yuv420p (was 225, which caused "Invalid argument")
         let fps = 30.0f32;
         let speed_px_per_sec = 5.0f32 * fps;
         let scale = Scale::uniform(frame_h as f32 * 0.6);
@@ -56,7 +56,10 @@ pub fn convert_text(
         let duration = (total_scroll_px / speed_px_per_sec).max(1.0);
         let total_frames = (duration * fps) as usize;
 
-        let strip_w = (frame_w as f32 + total_text_w + frame_w as f32).ceil() as u32;
+        // Force strip_w to be even — libx264 yuv420p requires even width and height
+        let raw_strip_w = (frame_w as f32 + total_text_w + frame_w as f32).ceil() as u32;
+        let strip_w = if raw_strip_w % 2 != 0 { raw_strip_w + 1 } else { raw_strip_w };
+
         let mut strip = RgbImage::new(strip_w, frame_h);
         let mut x = frame_w as f32;
         let text_color = image::Rgb(color);
