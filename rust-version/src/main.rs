@@ -661,7 +661,7 @@ impl eframe::App for CubeConvertApp {
                                 ui.label("PALETTE:");
                                 ui.add_space(8.0);
                                 for color in self.color_history.clone() {
-                                    let (r, g, b) = (color[0], color[1], b[2]);
+                                    let (r, g, b) = (color[0], color[1], color[2]);
                                     let color32 = egui::Color32::from_rgb(r, g, b);
                                     
                                     let (rect, response) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::click());
