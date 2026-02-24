@@ -190,7 +190,7 @@ impl CubeConvertApp {
         
         visuals.window_rounding = egui::Rounding::same(0.0);
         visuals.window_stroke = egui::Stroke::new(3.0, COLOR_TEXT);
-        visuals.popup_shadow = egui::epaint::Shadow { extrusion: 0.0, color: COLOR_TEXT };
+        visuals.popup_shadow = egui::epaint::Shadow::NONE;
 
         ctx.set_visuals(visuals);
 
@@ -198,7 +198,7 @@ impl CubeConvertApp {
         style.spacing.button_padding = egui::vec2(16.0, 8.0);
         style.spacing.item_spacing = egui::vec2(12.0, 16.0);
         // Fix text wrapping and sizing
-        style.wrap_mode = Some(egui::TextWrapMode::Wrap);
+        style.wrap = Some(true);
         ctx.set_style(style);
     }
 
@@ -472,14 +472,12 @@ impl eframe::App for CubeConvertApp {
                     if !self.is_converting {
                         // Standard button, not filling width
                         let btn_text = egui::RichText::new("EXECUTE").size(18.0).strong();
-                        let btn = egui::Button::new(btn_text).min_size(egui::vec2(120.0, 40.0));
-                        if ui.add_enabled(self.selected_path.is_some(), btn).clicked() {
+                        if ui.add_enabled(self.selected_path.is_some(), egui::Button::new(btn_text).min_size(egui::vec2(120.0, 40.0))).clicked() {
                             self.start_conversion(ctx.clone());
                         }
                     } else {
                         let btn_text = egui::RichText::new("ABORT").size(18.0).strong();
-                        let btn = egui::Button::new(btn_text).min_size(egui::vec2(120.0, 40.0));
-                        if ui.button(btn).clicked() {
+                        if ui.button(egui::Button::new(btn_text).min_size(egui::vec2(120.0, 40.0))).clicked() {
                             self.cancel_flag.store(true, Ordering::Relaxed);
                             self.status_msg = "ABORTING...".to_string();
                         }
