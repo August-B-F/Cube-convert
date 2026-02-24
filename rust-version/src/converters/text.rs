@@ -46,10 +46,6 @@ pub fn convert_text(
         let frame_h = 224u32;
         
         let fps = 60.0f32; 
-        
-        // 2 pixels * 60 frames = 120 pixels per second. 
-        // This is extremely smooth and sharp, eliminating the optical illusion
-        // without introducing any blur or ghosting.
         let speed_px_per_frame = 2; 
         let speed_px_per_sec = (speed_px_per_frame as f32) * fps; 
         
@@ -65,8 +61,16 @@ pub fn convert_text(
             last = Some(g.id());
         }
 
-        let total_scroll_px = total_text_w + frame_w as f32;
-        let duration = (total_scroll_px / speed_px_per_sec) + 1.0;
+        // Duration breakdown:
+        //   Phase 1 - Enter:   frame_w / speed  (text slides in from the right)
+        //   Phase 2 - Exit:    total_text_w / speed  (text slides fully off to the left)
+        //
+        // We add BOTH phases explicitly so the video always ends after the text
+        // fully exits, regardless of any small difference between Rust's font
+        // measurement and FFmpeg's internal text_w.
+        let enter_time = frame_w as f32 / speed_px_per_sec;
+        let exit_time  = total_text_w / speed_px_per_sec;
+        let duration   = enter_time + exit_time + 0.5; // 0.5s black tail after exit
         let total_frames = (duration * fps).ceil() as usize;
 
         let tmp_dir = shared::make_temp_dir("text")?;
@@ -79,7 +83,6 @@ pub fn convert_text(
         let font_p = font_path.to_string_lossy().replace('\\', "/").replace(':', "\\:");
         let text_p = text_file.to_string_lossy().replace('\\', "/").replace(':', "\\:");
 
-        // Removed the tmix filter, reverting to standard pure text rendering
         let filter_str = format!(
             "color=c=black:s={frame_w}x{frame_h}:d={duration} [bg]; \
             [bg]drawtext=fontfile='{font_p}':textfile='{text_p}':\
@@ -99,11 +102,9 @@ pub fn convert_text(
             "-map".into(), "[out]".into(),
             "-t".into(), duration.to_string(),
             "-r".into(), fps.to_string(), "-c:v".into(), "libx264".into(),
-            
             "-preset".into(), "veryfast".into(), 
             "-crf".into(), "32".into(), 
             "-tune".into(), "animation".into(),
-            // Updated GOP to 300 (which is 5 seconds of video at 60 FPS) to maintain excellent compression
             "-g".into(), "300".into(),
             "-pix_fmt".into(), "yuv420p".into(),
         ];
