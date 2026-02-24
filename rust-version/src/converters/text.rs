@@ -52,6 +52,7 @@ pub fn convert_text(
         
         let fps = 60.0f32; 
         let speed_px_per_frame = 2u32;
+        let speed_px_per_sec = speed_px_per_frame as f32 * fps;
         
         let font_size_px = (frame_h as f32 * 0.6).round() as u32;
         let scale = Scale::uniform(font_size_px as f32);
@@ -65,7 +66,9 @@ pub fn convert_text(
             last = Some(g.id());
         }
 
-        let total_scroll_px = total_text_w + (frame_w as f32 * 2.0);
+        // Added a slightly larger margin (3.0 instead of 2.0) to ensure it clears the screen entirely
+        // even if FFmpeg renders the font slightly wider than rusttype estimates.
+        let total_scroll_px = total_text_w + (frame_w as f32 * 3.0);
         let total_frames = (total_scroll_px / speed_px_per_frame as f32).ceil() as usize;
         let duration = total_frames as f32 / fps;
 
@@ -80,16 +83,17 @@ pub fn convert_text(
         let text_p = text_file.to_string_lossy().replace('\\', "/").replace(':', "\\:");
 
         let filter_str = format!(
-            "color=c=black:s={frame_w}x{frame_h}:d={duration} [bg]; \
+            "color=c=black:s={frame_w}x{frame_h}:d={duration}:r={fps} [bg]; \
             [bg]drawtext=fontfile='{font_p}':textfile='{text_p}':\
             fontcolor={hex_color}:fontsize={fontsize}:y=(h-text_h)/2:\
-            x=w-n*{speed} [out]",
+            x=w-t*{speed_sec} [out]",
             duration=duration,
+            fps=fps,
             font_p=font_p,
             text_p=text_p,
             hex_color=hex_color,
             fontsize=font_size_px,
-            speed=speed_px_per_frame
+            speed_sec=speed_px_per_sec
         );
 
         let mut args: Vec<String> = vec![
