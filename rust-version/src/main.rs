@@ -161,7 +161,7 @@ impl CubeConvertApp {
         visuals.override_text_color = Some(COLOR_TEXT);
         
         visuals.selection.bg_fill = COLOR_TEXT;
-        visuals.selection.stroke = egui::Stroke::new(1.0, COLOR_BG);
+        visuals.selection.stroke = egui::Stroke::new(1.0, COLOR_ACCENT);
 
         // Fix for white backgrounds: explicitly set widget backgrounds to COLOR_BG
         visuals.widgets.noninteractive.bg_fill = COLOR_BG;
@@ -175,12 +175,12 @@ impl CubeConvertApp {
 
         visuals.widgets.hovered.bg_fill = COLOR_TEXT;
         visuals.widgets.hovered.bg_stroke = egui::Stroke::new(2.0, COLOR_TEXT);
-        visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, COLOR_BG);
+        visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, COLOR_ACCENT);
         visuals.widgets.hovered.rounding = egui::Rounding::same(0.0);
 
         visuals.widgets.active.bg_fill = COLOR_ACCENT;
         visuals.widgets.active.bg_stroke = egui::Stroke::new(2.0, COLOR_TEXT);
-        visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, COLOR_BG);
+        visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, COLOR_ACCENT);
         visuals.widgets.active.rounding = egui::Rounding::same(0.0);
         
         // Button-specific fixes for uniform styling
@@ -234,7 +234,7 @@ impl CubeConvertApp {
             };
             
             let text_color = if is_selected {
-                COLOR_BG
+                COLOR_ACCENT
             } else {
                 COLOR_TEXT
             };
@@ -273,7 +273,7 @@ impl eframe::App for CubeConvertApp {
 
         // Render Error Popup if needed (Improved layout)
         if self.show_error_popup {
-            egui::Window::new(egui::RichText::new("! ERROR !").color(COLOR_BG).background_color(COLOR_RED).size(16.0))
+            egui::Window::new(egui::RichText::new("! ERROR !").color(COLOR_ACCENT).background_color(COLOR_RED).size(16.0))
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -457,7 +457,7 @@ impl eframe::App for CubeConvertApp {
                                 egui::Align2::CENTER_CENTER,
                                 "+++ SUCCESS +++",
                                 egui::FontId::proportional(16.0),
-                                COLOR_BG,
+                                COLOR_ACCENT,
                             );
                             
                             ui.add_space(16.0);
@@ -628,7 +628,7 @@ impl eframe::App for CubeConvertApp {
                         .inner_margin(egui::Margin::symmetric(16.0, 12.0))
                         .show(ui, |ui| {
                             ui.add_enabled_ui(!self.is_converting, |ui| {
-                                ui.horizontal(|ui| {
+                                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                     ui.label("> CLOUD DIRECTORY MODE:");
                                     ui.add_space(16.0);
                                     ui.radio_value(&mut self.clouds_folder_mode, CloudsFolderMode::StitchImages, "[ STITCH ]");
@@ -648,7 +648,7 @@ impl eframe::App for CubeConvertApp {
                         .inner_margin(egui::Margin::symmetric(16.0, 12.0))
                         .show(ui, |ui| {
                         ui.add_enabled_ui(!self.is_converting, |ui| {
-                            ui.horizontal(|ui| {
+                            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                 ui.label("> COLOR:");
                                 ui.add_space(8.0);
                                 ui.scope(|ui| {
