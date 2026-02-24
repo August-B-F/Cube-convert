@@ -477,7 +477,7 @@ impl eframe::App for CubeConvertApp {
                         }
                     } else {
                         let btn_text = egui::RichText::new("ABORT").size(18.0).strong();
-                        if ui.button(egui::Button::new(btn_text).min_size(egui::vec2(120.0, 40.0))).clicked() {
+                        if ui.add(egui::Button::new(btn_text).min_size(egui::vec2(120.0, 40.0))).clicked() {
                             self.cancel_flag.store(true, Ordering::Relaxed);
                             self.status_msg = "ABORTING...".to_string();
                         }
