@@ -447,8 +447,22 @@ impl eframe::App for CubeConvertApp {
                         }
                     } else if !self.status_msg.is_empty() {
                         if self.status_msg == "Done." {
+                            // A bold retro success banner
+                            let badge_size = egui::vec2(150.0, 32.0);
+                            let (rect, _) = ui.allocate_exact_size(badge_size, egui::Sense::hover());
+                            ui.painter().rect_filled(rect, 0.0, COLOR_TEXT);
+                            
+                            ui.painter().text(
+                                rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                "+++ SUCCESS +++",
+                                egui::FontId::proportional(16.0),
+                                COLOR_BG,
+                            );
+                            
+                            ui.add_space(16.0);
                             ui.label(egui::RichText::new("> PROCESS COMPLETE.").color(COLOR_TEXT).strong().size(16.0));
-                            ui.add_space(10.0);
+                            ui.add_space(16.0);
                             if ui.add(egui::Button::new("[ OPEN DIR ]").fill(COLOR_BG)).clicked() {
                                 if let Some(path) = &self.selected_path {
                                     let dir = if self.is_folder {
@@ -637,18 +651,9 @@ impl eframe::App for CubeConvertApp {
                             ui.horizontal(|ui| {
                                 ui.label("> COLOR:");
                                 ui.add_space(8.0);
-                                // Draw a big square for the current color
-                                let (rect, response) = ui.allocate_exact_size(egui::vec2(40.0, 24.0), egui::Sense::click());
-                                if ui.is_rect_visible(rect) {
-                                    let current_c = egui::Color32::from_rgb(self.rgb_color[0], self.rgb_color[1], self.rgb_color[2]);
-                                    ui.painter().rect(rect, 0.0, current_c, egui::Stroke::new(2.0, COLOR_TEXT));
-                                }
-                                
-                                // Overlay actual color edit button
-                                ui.put(egui::Rect::from_min_size(rect.min, rect.size()), |ui: &mut egui::Ui| {
-                                   let r = ui.color_edit_button_srgb(&mut self.rgb_color);
-                                   // Make it invisible by just taking up space but not drawing over our custom rect
-                                   r
+                                ui.scope(|ui| {
+                                    ui.spacing_mut().interact_size = egui::vec2(40.0, 24.0);
+                                    ui.color_edit_button_srgb(&mut self.rgb_color);
                                 });
                                 
                                 ui.add_space(24.0);
@@ -656,7 +661,7 @@ impl eframe::App for CubeConvertApp {
                                 ui.label("PALETTE:");
                                 ui.add_space(8.0);
                                 for color in self.color_history.clone() {
-                                    let (r, g, b) = (color[0], color[1], color[2]);
+                                    let (r, g, b) = (color[0], color[1], b[2]);
                                     let color32 = egui::Color32::from_rgb(r, g, b);
                                     
                                     let (rect, response) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::click());
