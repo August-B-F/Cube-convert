@@ -19,7 +19,7 @@ pub fn convert_text(
 
     shared::process_files(file_path, is_folder, tx, cancel.clone(), |pdf, name, prog_tx| {
         let out = pdf.with_file_name(format!("{name}.mp4"));
-        let partial_out = out.with_extension("mp4.partial");
+        let partial_out = out.with_extension("tmp.mp4");
         if out.exists() {
             return Ok(());
         }
@@ -34,8 +34,6 @@ pub fn convert_text(
         let speed_px_per_sec = 5.0f32 * fps;
         let scale = Scale::uniform(frame_h as f32 * 0.6);
 
-        // We only use rusttype to measure the exact length of the text,
-        // so we know exactly how long the video should be.
         let mut total_text_w = 0.0f32;
         let mut last = None;
         for ch in text.chars() {
@@ -56,12 +54,9 @@ pub fn convert_text(
 
         let hex_color = format!("0x{:02x}{:02x}{:02x}", color[0], color[1], color[2]);
         
-        // Windows path escape for FFmpeg drawtext:
-        // C:\Path -> C\:/Path
         let font_p = font_path.to_string_lossy().replace('\\', "/").replace(':', "\\:");
         let text_p = text_file.to_string_lossy().replace('\\', "/").replace(':', "\\:");
 
-        // Native FFmpeg drawtext (Insanely fast, uses almost 0 memory)
         let filter_str = format!(
             "color=c=black:s={frame_w}x{frame_h}:d={duration} [bg]; \
             [bg]drawtext=fontfile='{font_p}':textfile='{text_p}':\

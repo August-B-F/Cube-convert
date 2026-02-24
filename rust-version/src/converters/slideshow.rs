@@ -14,7 +14,7 @@ pub fn convert_slideshow(
     }
 
     let out = folder_path.with_file_name(format!("{}_slideshow.mp4", folder_path.file_name().unwrap_or_default().to_string_lossy()));
-    let partial_out = out.with_extension("mp4.partial");
+    let partial_out = out.with_extension("tmp.mp4");
     
     let mut files: Vec<PathBuf> = fs::read_dir(folder_path)
         .map_err(|e| e.to_string())?

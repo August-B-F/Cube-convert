@@ -26,7 +26,7 @@ pub fn convert_clouds(
 ) -> Result<(), String> {
     if is_folder && stitch_images {
         let out = file_path.with_file_name(format!("{}_clouds.mp4", file_path.file_name().unwrap_or_default().to_string_lossy()));
-        let partial_out = out.with_extension("mp4.partial");
+        let partial_out = out.with_extension("tmp.mp4");
         if out.exists() { return Ok(()); }
 
         let _ = tx.send(super::Progress::Init { total: 1 });
@@ -38,7 +38,6 @@ pub fn convert_clouds(
             return Err("No PNG/JPG images found in the selected folder".into());
         }
 
-        // LOAD AND RESIZE IMAGES (Keeps memory very low compared to full strip)
         let mut images = Vec::new();
         for p in &page_files {
             if cancel.load(std::sync::atomic::Ordering::Relaxed) {
@@ -64,7 +63,6 @@ pub fn convert_clouds(
         
         let total_virtual_w = images.len() as f32 * 750.0;
 
-        // STREAM FRAMES DIRECTLY TO FFMPEG TO SAVE MASSIVE CPU/RAM
         let result = shared::run_ffmpeg_stream(&args, &tx, &stem, cancel.clone(), |stdin| {
             let mut frame = vec![0u8; 750 * 360 * 3];
             for f in 0..total_frames {
@@ -123,7 +121,7 @@ pub fn convert_clouds(
     } else {
         shared::process_files(file_path, is_folder, tx, cancel.clone(), |pdf, name, prog_tx| {
             let out = pdf.with_file_name(format!("{name}.mp4"));
-            let partial_out = out.with_extension("mp4.partial");
+            let partial_out = out.with_extension("tmp.mp4");
             if out.exists() {
                 return Ok(());
             }
@@ -147,7 +145,6 @@ pub fn convert_clouds(
                 return Err("pdftoppm produced no PNGs".into());
             }
 
-            // LOAD AND RESIZE IMAGES
             let mut images = Vec::new();
             for p in &page_files {
                 if cancel.load(std::sync::atomic::Ordering::Relaxed) {

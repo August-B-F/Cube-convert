@@ -21,7 +21,7 @@ pub fn convert_rgb(
 ) -> Result<(), String> {
     shared::process_files(file_path, is_folder, tx, cancel.clone(), |pdf, name, prog_tx| {
         let out = pdf.with_file_name(format!("{name}.mp4"));
-        let partial_out = out.with_extension("mp4.partial");
+        let partial_out = out.with_extension("tmp.mp4");
         if out.exists() {
             return Ok(());
         }

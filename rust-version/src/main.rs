@@ -128,7 +128,7 @@ impl eframe::App for CubeConvertApp {
 
         // Render Error Popup if needed
         if self.show_error_popup {
-            egui::Window::new("⚠️ Error")
+            egui::Window::new(egui::RichText::new("Error").color(egui::Color32::RED))
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
