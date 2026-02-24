@@ -141,8 +141,12 @@ impl eframe::App for CubeConvertApp {
                 });
         }
 
+        let mut is_hovering_file = false;
         ctx.input(|i| {
             if !self.is_converting {
+                if !i.raw.hovered_files.is_empty() {
+                    is_hovering_file = true;
+                }
                 if let Some(dropped) = i.raw.dropped_files.first() {
                     if let Some(path) = &dropped.path {
                         self.selected_path = Some(path.clone());
@@ -380,6 +384,19 @@ impl eframe::App for CubeConvertApp {
             }
         });
 
+        if is_hovering_file {
+            let rect = ctx.screen_rect();
+            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("drop_overlay")));
+            painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(200));
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "📥 Drop File or Folder Here",
+                egui::FontId::proportional(32.0),
+                egui::Color32::WHITE,
+            );
+        }
+
         if self.is_converting {
             ctx.request_repaint();
         }
@@ -448,9 +465,28 @@ impl CubeConvertApp {
     }
 }
 
+fn load_icon() -> Option<egui::IconData> {
+    if let Ok(img) = image::open("assets/icon.png") {
+        let rgba = img.into_rgba8();
+        let (width, height) = rgba.dimensions();
+        return Some(egui::IconData {
+            rgba: rgba.into_raw(),
+            width,
+            height,
+        });
+    }
+    None
+}
+
 fn main() -> eframe::Result<()> {
+    let mut viewport = egui::ViewportBuilder::default().with_inner_size([600.0, 480.0]);
+    
+    if let Some(icon) = load_icon() {
+        viewport = viewport.with_icon(std::sync::Arc::new(icon));
+    }
+
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([600.0, 480.0]),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(
