@@ -30,14 +30,8 @@ pub fn convert_text(
 
         let frame_w = 600u32;
         let frame_h = 224u32;
-        
-        // Double the framerate to 60 FPS for buttery smooth playback
-        let fps = 60.0f32; 
-        
-        // Lock the speed to exactly 3 pixels per frame to completely eliminate fractional-pixel judder.
-        // 3 pixels * 60 frames = 180 pixels per second. 
-        let speed_px_per_sec = 3.0f32 * fps; 
-        
+        let fps = 30.0f32;
+        let speed_px_per_sec = 5.0f32 * fps;
         let scale = Scale::uniform(frame_h as f32 * 0.6);
 
         let mut total_text_w = 0.0f32;
