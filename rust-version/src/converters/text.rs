@@ -46,12 +46,12 @@ pub fn convert_text(
         let frame_h = 224u32;
         
         let fps = 60.0f32; 
-        let speed_px_per_frame = 2; 
-        let speed_px_per_sec = (speed_px_per_frame as f32) * fps; 
+        let speed_px_per_frame = 2u32;
         
         let font_size_px = (frame_h as f32 * 0.6).round() as u32;
         let scale = Scale::uniform(font_size_px as f32);
 
+        // Measure the text width using rusttype
         let mut total_text_w = 0.0f32;
         let mut last = None;
         for ch in text.chars() {
@@ -61,16 +61,15 @@ pub fn convert_text(
             last = Some(g.id());
         }
 
-        // FFmpeg's FreeType renderer often produces wider text than Rusttype calculates 
-        // due to hinting, anti-aliasing, and pixel grid alignment. We add a 10% safety multiplier
-        // to the calculated width to guarantee the duration is always long enough to finish the scroll.
-        let estimated_text_w = total_text_w * 1.10; 
-
-        let enter_time = frame_w as f32 / speed_px_per_sec;
-        let exit_time  = estimated_text_w / speed_px_per_sec;
-        // Add a generous 4 seconds of solid black tail padding.
-        let duration   = enter_time + exit_time + 4.0; 
-        let total_frames = (duration * fps).ceil() as usize;
+        // Rusttype's advance width measurements are consistently narrower than what 
+        // FFmpeg's FreeType renderer actually draws due to hinting and pixel rounding.
+        // Instead of guessing by how much, we follow the user's formula:
+        //   total scroll = measured_text_w + (screen_width * 2)
+        // The extra screen_width on the right covers text still entering.
+        // The extra screen_width on the left ensures it fully exits before the video ends.
+        let total_scroll_px = total_text_w + (frame_w as f32 * 2.0);
+        let total_frames = (total_scroll_px / speed_px_per_frame as f32).ceil() as usize;
+        let duration = total_frames as f32 / fps;
 
         let tmp_dir = shared::make_temp_dir("text")?;
         
@@ -101,9 +100,6 @@ pub fn convert_text(
             "-map".into(), "[out]".into(),
             "-t".into(), duration.to_string(),
             "-r".into(), fps.to_string(), "-c:v".into(), "libx264".into(),
-            
-            // Relaxed the compression. Changed from 'veryfast' + 'CRF 32' to 'fast' + 'CRF 26'
-            // This will give you visually higher quality text edges and a slightly larger file size (e.g. 40MB instead of 20MB)
             "-preset".into(), "fast".into(), 
             "-crf".into(), "26".into(), 
             "-tune".into(), "animation".into(),
