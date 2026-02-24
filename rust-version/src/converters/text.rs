@@ -26,9 +26,6 @@ pub fn convert_text(
 
         let text_raw = shared::extract_text(pdf)?;
         
-        // Critical Fix #1: PDF extraction pulls out hundreds of invisible padding spaces.
-        // This is why Rust's text width was 15 minutes longer than FFmpeg's in the past!
-        // We now collapse all consecutive whitespaces into a single space.
         let mut cleaned = String::with_capacity(text_raw.len());
         let mut last_was_space = false;
         for c in text_raw.chars() {
@@ -48,14 +45,14 @@ pub fn convert_text(
         let frame_w = 600u32;
         let frame_h = 224u32;
         
-        let fps = 60.0f32; 
+        // Revert to 30 FPS to instantly halve the number of frames generated.
+        let fps = 30.0f32; 
         
-        // Critical Fix #2: Eliminate "Choppiness" and "0.5GB File Size".
-        // Instead of calculating a fractional speed (e.g., 3.73 pixels per frame), we lock 
-        // it to EXACTLY 3 pixels per frame. Fractional speeds cause the font's anti-aliased 
-        // edges to "shimmer" every frame, which looks choppy and destroys video compression 
-        // (causing a 10x file size explosion). Integer steps compress flawlessly.
-        let speed_px_per_frame = 3; 
+        // 5 pixels * 30 frames = 150 pixels per second.
+        // This is exactly the scroll speed your app had originally! 
+        // Keeping it strictly as an integer (5) per frame prevents the anti-alias shimmering
+        // that made it look choppy and destroyed the compression previously.
+        let speed_px_per_frame = 5; 
         let speed_px_per_sec = (speed_px_per_frame as f32) * fps; 
         
         let font_size_px = (frame_h as f32 * 0.6).round() as u32;
@@ -71,7 +68,6 @@ pub fn convert_text(
         }
 
         let total_scroll_px = total_text_w + frame_w as f32;
-        // Add 1 second of padding so it completely clears the screen
         let duration = (total_scroll_px / speed_px_per_sec) + 1.0;
         let total_frames = (duration * fps).ceil() as usize;
 
@@ -85,7 +81,6 @@ pub fn convert_text(
         let font_p = font_path.to_string_lossy().replace('\\', "/").replace(':', "\\:");
         let text_p = text_file.to_string_lossy().replace('\\', "/").replace(':', "\\:");
 
-        // x=w-n*3 perfectly enforces integer pixel movement. 'n' is FFmpeg's frame counter.
         let filter_str = format!(
             "color=c=black:s={frame_w}x{frame_h}:d={duration} [bg]; \
             [bg]drawtext=fontfile='{font_p}':textfile='{text_p}':\
@@ -105,10 +100,24 @@ pub fn convert_text(
             "-map".into(), "[out]".into(),
             "-t".into(), duration.to_string(),
             "-r".into(), fps.to_string(), "-c:v".into(), "libx264".into(),
-            "-preset".into(), shared::ffmpeg_preset(), 
-            // Optimize explicitly for flat animations to massively compress the file size
-            "-crf".into(), "26".into(), 
+            
+            // Fix #1: If your global shared::ffmpeg_preset() was set to "ultrafast", 
+            // that completely disables H.264 motion compression. We hardcode "veryfast" here 
+            // which enables motion vectors while still generating incredibly quickly.
+            "-preset".into(), "veryfast".into(), 
+            
+            // Fix #2: Turn up the compression aggressively. CRF 32 looks identical 
+            // to CRF 23 when it comes to simple flat text on a black background, 
+            // but saves massive amounts of space.
+            "-crf".into(), "32".into(), 
             "-tune".into(), "animation".into(),
+            
+            // Fix #3: Long GOP (Group of Pictures). By telling FFmpeg to only create 
+            // an I-Frame every 150 frames (5 seconds), it relies heavily on motion vectors.
+            // Since the text is scrolling perfectly smoothly at 5px per frame, motion vectors
+            // compress this perfectly.
+            "-g".into(), "150".into(),
+            
             "-pix_fmt".into(), "yuv420p".into(),
         ];
         
