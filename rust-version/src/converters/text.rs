@@ -45,9 +45,12 @@ pub fn convert_text(
         let frame_w = 600u32;
         let frame_h = 224u32;
         
-        let fps = 30.0f32; 
+        let fps = 60.0f32; 
         
-        let speed_px_per_frame = 5; 
+        // 2 pixels * 60 frames = 120 pixels per second. 
+        // This is extremely smooth and sharp, eliminating the optical illusion
+        // without introducing any blur or ghosting.
+        let speed_px_per_frame = 2; 
         let speed_px_per_sec = (speed_px_per_frame as f32) * fps; 
         
         let font_size_px = (frame_h as f32 * 0.6).round() as u32;
@@ -76,14 +79,12 @@ pub fn convert_text(
         let font_p = font_path.to_string_lossy().replace('\\', "/").replace(':', "\\:");
         let text_p = text_file.to_string_lossy().replace('\\', "/").replace(':', "\\:");
 
-        // Added tmix to simulate motion blur. 1 2 1 weights the current frame twice as heavily 
-        // as the adjacent frames so it stays readable, but gains a soft smeared edge to kill the wagon-wheel effect.
+        // Removed the tmix filter, reverting to standard pure text rendering
         let filter_str = format!(
             "color=c=black:s={frame_w}x{frame_h}:d={duration} [bg]; \
             [bg]drawtext=fontfile='{font_p}':textfile='{text_p}':\
             fontcolor={hex_color}:fontsize={fontsize}:y=(h-text_h)/2:\
-            x=w-n*{speed} [txt]; \
-            [txt]tmix=frames=3:weights=1 2 1 [out]",
+            x=w-n*{speed} [out]",
             duration=duration,
             font_p=font_p,
             text_p=text_p,
@@ -102,7 +103,8 @@ pub fn convert_text(
             "-preset".into(), "veryfast".into(), 
             "-crf".into(), "32".into(), 
             "-tune".into(), "animation".into(),
-            "-g".into(), "150".into(),
+            // Updated GOP to 300 (which is 5 seconds of video at 60 FPS) to maintain excellent compression
+            "-g".into(), "300".into(),
             "-pix_fmt".into(), "yuv420p".into(),
         ];
         
