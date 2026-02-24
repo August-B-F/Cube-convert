@@ -45,13 +45,8 @@ pub fn convert_text(
         let frame_w = 600u32;
         let frame_h = 224u32;
         
-        // Revert to 30 FPS to instantly halve the number of frames generated.
         let fps = 30.0f32; 
         
-        // 5 pixels * 30 frames = 150 pixels per second.
-        // This is exactly the scroll speed your app had originally! 
-        // Keeping it strictly as an integer (5) per frame prevents the anti-alias shimmering
-        // that made it look choppy and destroyed the compression previously.
         let speed_px_per_frame = 5; 
         let speed_px_per_sec = (speed_px_per_frame as f32) * fps; 
         
@@ -81,11 +76,14 @@ pub fn convert_text(
         let font_p = font_path.to_string_lossy().replace('\\', "/").replace(':', "\\:");
         let text_p = text_file.to_string_lossy().replace('\\', "/").replace(':', "\\:");
 
+        // Added tmix to simulate motion blur. 1 2 1 weights the current frame twice as heavily 
+        // as the adjacent frames so it stays readable, but gains a soft smeared edge to kill the wagon-wheel effect.
         let filter_str = format!(
             "color=c=black:s={frame_w}x{frame_h}:d={duration} [bg]; \
             [bg]drawtext=fontfile='{font_p}':textfile='{text_p}':\
             fontcolor={hex_color}:fontsize={fontsize}:y=(h-text_h)/2:\
-            x=w-n*{speed} [out]",
+            x=w-n*{speed} [txt]; \
+            [txt]tmix=frames=3:weights=1 2 1 [out]",
             duration=duration,
             font_p=font_p,
             text_p=text_p,
@@ -101,23 +99,10 @@ pub fn convert_text(
             "-t".into(), duration.to_string(),
             "-r".into(), fps.to_string(), "-c:v".into(), "libx264".into(),
             
-            // Fix #1: If your global shared::ffmpeg_preset() was set to "ultrafast", 
-            // that completely disables H.264 motion compression. We hardcode "veryfast" here 
-            // which enables motion vectors while still generating incredibly quickly.
             "-preset".into(), "veryfast".into(), 
-            
-            // Fix #2: Turn up the compression aggressively. CRF 32 looks identical 
-            // to CRF 23 when it comes to simple flat text on a black background, 
-            // but saves massive amounts of space.
             "-crf".into(), "32".into(), 
             "-tune".into(), "animation".into(),
-            
-            // Fix #3: Long GOP (Group of Pictures). By telling FFmpeg to only create 
-            // an I-Frame every 150 frames (5 seconds), it relies heavily on motion vectors.
-            // Since the text is scrolling perfectly smoothly at 5px per frame, motion vectors
-            // compress this perfectly.
             "-g".into(), "150".into(),
-            
             "-pix_fmt".into(), "yuv420p".into(),
         ];
         
