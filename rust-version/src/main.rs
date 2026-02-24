@@ -11,7 +11,7 @@ use std::fs;
 mod converters;
 use converters::Progress;
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 enum ConversionType {
     Wind,
     Bpm,
@@ -206,14 +206,20 @@ impl eframe::App for CubeConvertApp {
             ui.add_space(8.0);
 
             ui.add_enabled_ui(!self.is_converting, |ui| {
+                let mut tab_changed = false;
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.selected_tab, ConversionType::Wind, "WIND");
-                    ui.selectable_value(&mut self.selected_tab, ConversionType::Bpm, "BPM");
-                    ui.selectable_value(&mut self.selected_tab, ConversionType::Clouds, "CLOUDS");
-                    ui.selectable_value(&mut self.selected_tab, ConversionType::Rgb, "RGB");
-                    ui.selectable_value(&mut self.selected_tab, ConversionType::Text, "TEXT");
-                    ui.selectable_value(&mut self.selected_tab, ConversionType::Slideshow, "SLIDESHOW");
+                    if ui.selectable_value(&mut self.selected_tab, ConversionType::Wind, "WIND").changed() { tab_changed = true; }
+                    if ui.selectable_value(&mut self.selected_tab, ConversionType::Bpm, "BPM").changed() { tab_changed = true; }
+                    if ui.selectable_value(&mut self.selected_tab, ConversionType::Clouds, "CLOUDS").changed() { tab_changed = true; }
+                    if ui.selectable_value(&mut self.selected_tab, ConversionType::Rgb, "RGB").changed() { tab_changed = true; }
+                    if ui.selectable_value(&mut self.selected_tab, ConversionType::Text, "TEXT").changed() { tab_changed = true; }
+                    if ui.selectable_value(&mut self.selected_tab, ConversionType::Slideshow, "SLIDESHOW").changed() { tab_changed = true; }
                 });
+
+                if tab_changed {
+                    self.status_msg.clear();
+                    self.show_error_popup = false;
+                }
             });
             ui.separator();
 

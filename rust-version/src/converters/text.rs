@@ -57,16 +57,18 @@ pub fn convert_text(
         let font_p = font_path.to_string_lossy().replace('\\', "/").replace(':', "\\:");
         let text_p = text_file.to_string_lossy().replace('\\', "/").replace(':', "\\:");
 
+        // The x calculation perfectly synchronizes FFmpeg's internal rendered text_w with our duration.
+        // It starts exactly at w (off-screen right) and ends exactly at -text_w (off-screen left).
         let filter_str = format!(
             "color=c=black:s={frame_w}x{frame_h}:d={duration} [bg]; \
             [bg]drawtext=fontfile='{font_p}':textfile='{text_p}':\
-            fontcolor={hex_color}:fontsize={fontsize}:y=(h-text_h)/2:x=w-(t*{speed}) [out]",
+            fontcolor={hex_color}:fontsize={fontsize}:y=(h-text_h)/2:\
+            x=w-(t/{duration})*(w+text_w) [out]",
             duration=duration,
             font_p=font_p,
             text_p=text_p,
             hex_color=hex_color,
-            fontsize=scale.y,
-            speed=speed_px_per_sec
+            fontsize=scale.y
         );
 
         let mut args: Vec<String> = vec![
