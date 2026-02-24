@@ -61,16 +61,15 @@ pub fn convert_text(
             last = Some(g.id());
         }
 
-        // Duration breakdown:
-        //   Phase 1 - Enter:   frame_w / speed  (text slides in from the right)
-        //   Phase 2 - Exit:    total_text_w / speed  (text slides fully off to the left)
-        //
-        // We add BOTH phases explicitly so the video always ends after the text
-        // fully exits, regardless of any small difference between Rust's font
-        // measurement and FFmpeg's internal text_w.
+        // FFmpeg's FreeType renderer often produces wider text than Rusttype calculates 
+        // due to hinting, anti-aliasing, and pixel grid alignment. We add a 10% safety multiplier
+        // to the calculated width to guarantee the duration is always long enough to finish the scroll.
+        let estimated_text_w = total_text_w * 1.10; 
+
         let enter_time = frame_w as f32 / speed_px_per_sec;
-        let exit_time  = total_text_w / speed_px_per_sec;
-        let duration   = enter_time + exit_time + 0.5; // 0.5s black tail after exit
+        let exit_time  = estimated_text_w / speed_px_per_sec;
+        // Add a generous 4 seconds of solid black tail padding.
+        let duration   = enter_time + exit_time + 4.0; 
         let total_frames = (duration * fps).ceil() as usize;
 
         let tmp_dir = shared::make_temp_dir("text")?;
@@ -102,8 +101,11 @@ pub fn convert_text(
             "-map".into(), "[out]".into(),
             "-t".into(), duration.to_string(),
             "-r".into(), fps.to_string(), "-c:v".into(), "libx264".into(),
-            "-preset".into(), "veryfast".into(), 
-            "-crf".into(), "32".into(), 
+            
+            // Relaxed the compression. Changed from 'veryfast' + 'CRF 32' to 'fast' + 'CRF 26'
+            // This will give you visually higher quality text edges and a slightly larger file size (e.g. 40MB instead of 20MB)
+            "-preset".into(), "fast".into(), 
+            "-crf".into(), "26".into(), 
             "-tune".into(), "animation".into(),
             "-g".into(), "300".into(),
             "-pix_fmt".into(), "yuv420p".into(),
