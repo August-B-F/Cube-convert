@@ -1,6 +1,5 @@
 use std::io::Write;
 use std::path::Path;
-use std::process::{Command, Stdio};
 use super::{shared, CancelFlag, ProgressTx};
 
 fn lerp_color(a: [u8; 3], b: [u8; 3], steps: usize) -> Vec<[u8; 3]> {
@@ -22,6 +21,7 @@ pub fn convert_rgb(
 ) -> Result<(), String> {
     shared::process_files(file_path, is_folder, tx, cancel.clone(), |pdf, name, prog_tx| {
         let out = pdf.with_file_name(format!("{name}.mp4"));
+        let partial_out = out.with_extension("mp4.partial");
         if out.exists() {
             return Ok(());
         }
@@ -54,8 +54,6 @@ pub fn convert_rgb(
             interpolated[idx.min(interpolated.len() - 1)]
         }).collect();
 
-        let ffmpeg = shared::ffmpeg_bin();
-        let mut cmd = Command::new(&ffmpeg);
         let mut args: Vec<String> = vec![
             "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(),
             "-f".into(), "rawvideo".into(), "-pix_fmt".into(), "rgb24".into(),
@@ -69,32 +67,20 @@ pub fn convert_rgb(
             args.push("2".into());
         }
         
-        args.push(out.to_string_lossy().to_string());
+        args.push(partial_out.to_string_lossy().to_string());
 
-        cmd.args(&args).stdin(Stdio::piped());
-        
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        }
-
-        let mut child = cmd.spawn().map_err(|e| format!("failed to spawn '{ffmpeg}': {e}"))?;
-
-        {
-            let mut stdin = child.stdin.take().ok_or("ffmpeg stdin unavailable")?;
+        let result = shared::run_ffmpeg_stream(&args, prog_tx, name, cancel.clone(), |stdin| {
             let mut raw = vec![0u8; 520 * 520 * 3];
             let mut count = 0;
             for color in &gradient {
                 if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                    let _ = child.kill();
                     return Err("Cancelled.".into());
                 }
 
                 for px in raw.chunks_mut(3) {
                     px[0] = color[0]; px[1] = color[1]; px[2] = color[2];
                 }
-                if stdin.write_all(&raw).is_err() { break; } // pipe broke, usually because process died
+                if stdin.write_all(&raw).is_err() { break; } 
                 
                 count += 1;
                 if count % 250 == 0 {
@@ -104,13 +90,15 @@ pub fn convert_rgb(
                     });
                 }
             }
-        }
+            Ok(())
+        });
         
-        let status = child.wait().map_err(|e| e.to_string())?;
-        if !status.success() && !cancel.load(std::sync::atomic::Ordering::Relaxed) {
-             Err(format!("ffmpeg exited with {}", status))
+        if result.is_ok() && !cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = std::fs::rename(&partial_out, &out);
         } else {
-             Ok(())
+            let _ = std::fs::remove_file(&partial_out);
         }
+
+        result
     })
 }

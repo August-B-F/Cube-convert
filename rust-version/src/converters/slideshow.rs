@@ -14,6 +14,7 @@ pub fn convert_slideshow(
     }
 
     let out = folder_path.with_file_name(format!("{}_slideshow.mp4", folder_path.file_name().unwrap_or_default().to_string_lossy()));
+    let partial_out = out.with_extension("mp4.partial");
     
     let mut files: Vec<PathBuf> = fs::read_dir(folder_path)
         .map_err(|e| e.to_string())?
@@ -55,16 +56,19 @@ pub fn convert_slideshow(
         "-i".into(), concat_file.to_string_lossy().to_string(),
         "-r".into(), "25".into(), "-c:v".into(), "libx264".into(),
         "-preset".into(), shared::ffmpeg_preset(), "-pix_fmt".into(), "yuv420p".into(),
-        out.to_string_lossy().to_string()
+        partial_out.to_string_lossy().to_string()
     ];
 
     let result = shared::run_ffmpeg(&args, Some(total_frames), &tx, &stem, cancel.clone());
     
-    if !cancel.load(std::sync::atomic::Ordering::Relaxed) {
-        let _ = tx.send(super::Progress::Done { name: stem });
-    }
-    
     let _ = fs::remove_dir_all(&tmp_dir);
+
+    if result.is_ok() && !cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        let _ = tx.send(super::Progress::Done { name: stem });
+        let _ = fs::rename(&partial_out, &out);
+    } else {
+        let _ = fs::remove_file(&partial_out);
+    }
     
     result
 }

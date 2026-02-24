@@ -1,7 +1,5 @@
 use std::fs;
 use std::path::Path;
-use image::{RgbImage};
-use imageproc::drawing::draw_text_mut;
 use rusttype::{Font, Scale};
 use super::{shared, CancelFlag, ProgressTx};
 
@@ -21,68 +19,66 @@ pub fn convert_text(
 
     shared::process_files(file_path, is_folder, tx, cancel.clone(), |pdf, name, prog_tx| {
         let out = pdf.with_file_name(format!("{name}.mp4"));
+        let partial_out = out.with_extension("mp4.partial");
         if out.exists() {
             return Ok(());
         }
 
         let mut text = shared::extract_text(pdf)?;
-        text = text.replace('\n', " ");
+        text = text.replace('\n', " ").replace('\r', " ").replace('\t', " ");
         if text.trim().is_empty() { return Err("No text found".into()); }
 
-        let chunk_size = 5;
-        let chunks: Vec<String> = text.chars().collect::<Vec<_>>()
-            .chunks(chunk_size).map(|c| c.iter().collect()).collect();
-
         let frame_w = 600u32;
-        let frame_h = 224u32; // Must be even for libx264 yuv420p (was 225, which caused "Invalid argument")
+        let frame_h = 224u32;
         let fps = 30.0f32;
         let speed_px_per_sec = 5.0f32 * fps;
         let scale = Scale::uniform(frame_h as f32 * 0.6);
 
-        let measure = |s: &str| -> f32 {
-            let mut w = 0.0f32;
-            let mut last = None;
-            for ch in s.chars() {
-                let g = font.glyph(ch);
-                if let Some(prev) = last { w += font.pair_kerning(scale, prev, g.id()); }
-                w += g.clone().scaled(scale).h_metrics().advance_width;
-                last = Some(g.id());
-            }
-            w
-        };
+        // We only use rusttype to measure the exact length of the text,
+        // so we know exactly how long the video should be.
+        let mut total_text_w = 0.0f32;
+        let mut last = None;
+        for ch in text.chars() {
+            let g = font.glyph(ch);
+            if let Some(prev) = last { total_text_w += font.pair_kerning(scale, prev, g.id()); }
+            total_text_w += g.clone().scaled(scale).h_metrics().advance_width;
+            last = Some(g.id());
+        }
 
-        let total_text_w: f32 = chunks.iter().map(|c| measure(c)).sum();
         let total_scroll_px = total_text_w + frame_w as f32;
         let duration = (total_scroll_px / speed_px_per_sec).max(1.0);
         let total_frames = (duration * fps) as usize;
 
-        // Force strip_w to be even — libx264 yuv420p requires even width and height
-        let raw_strip_w = (frame_w as f32 + total_text_w + frame_w as f32).ceil() as u32;
-        let strip_w = if raw_strip_w % 2 != 0 { raw_strip_w + 1 } else { raw_strip_w };
-
-        let mut strip = RgbImage::new(strip_w, frame_h);
-        let mut x = frame_w as f32;
-        let text_color = image::Rgb(color);
-        let y = (frame_h as f32 / 2.0 - scale.y / 2.0) as i32;
-
-        for chunk in &chunks {
-            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                return Err("Cancelled.".into());
-            }
-            let xi = x.round() as i32;
-            draw_text_mut(&mut strip, text_color, xi, y, scale, &font, chunk);
-            x += measure(chunk);
-        }
-
         let tmp_dir = shared::make_temp_dir("text")?;
-        let strip_png = tmp_dir.join("text_strip.png");
-        image::DynamicImage::ImageRgb8(strip).save(&strip_png).map_err(|e| format!("save strip: {e}"))?;
+        
+        let text_file = tmp_dir.join("scroll_text.txt");
+        fs::write(&text_file, text).map_err(|e| e.to_string())?;
 
-        let vf = format!("crop={frame_w}:{frame_h}:x=(iw-{frame_w})*t/{duration}:y=0");
+        let hex_color = format!("0x{:02x}{:02x}{:02x}", color[0], color[1], color[2]);
+        
+        // Windows path escape for FFmpeg drawtext:
+        // C:\Path -> C\:/Path
+        let font_p = font_path.to_string_lossy().replace('\\', "/").replace(':', "\\:");
+        let text_p = text_file.to_string_lossy().replace('\\', "/").replace(':', "\\:");
+
+        // Native FFmpeg drawtext (Insanely fast, uses almost 0 memory)
+        let filter_str = format!(
+            "color=c=black:s={frame_w}x{frame_h}:d={duration} [bg]; \
+            [bg]drawtext=fontfile='{font_p}':textfile='{text_p}':\
+            fontcolor={hex_color}:fontsize={fontsize}:y=(h-text_h)/2:x=w-(t*{speed}) [out]",
+            duration=duration,
+            font_p=font_p,
+            text_p=text_p,
+            hex_color=hex_color,
+            fontsize=scale.y,
+            speed=speed_px_per_sec
+        );
+
         let mut args: Vec<String> = vec![
             "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(), "-stats".into(),
-            "-loop".into(), "1".into(), "-i".into(), strip_png.to_string_lossy().to_string(),
-            "-vf".into(), vf, "-t".into(), duration.to_string(),
+            "-filter_complex".into(), filter_str,
+            "-map".into(), "[out]".into(),
+            "-t".into(), duration.to_string(),
             "-r".into(), fps.to_string(), "-c:v".into(), "libx264".into(),
             "-preset".into(), shared::ffmpeg_preset(), "-pix_fmt".into(), "yuv420p".into(),
         ];
@@ -91,11 +87,18 @@ pub fn convert_text(
             args.push("-threads".into());
             args.push("2".into());
         }
-        args.push(out.to_string_lossy().to_string());
+        args.push(partial_out.to_string_lossy().to_string());
 
         let result = shared::run_ffmpeg(&args, Some(total_frames), prog_tx, name, cancel.clone());
 
         let _ = fs::remove_dir_all(&tmp_dir);
+        
+        if result.is_ok() && !cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = fs::rename(&partial_out, &out);
+        } else {
+            let _ = fs::remove_file(&partial_out);
+        }
+
         result
     })
 }

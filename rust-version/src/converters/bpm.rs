@@ -11,6 +11,7 @@ pub fn convert_bpm(
 ) -> Result<(), String> {
     shared::process_files(file_path, is_folder, tx, cancel.clone(), |pdf, name, prog_tx| {
         let out = pdf.with_file_name(format!("{name}.mp3"));
+        let partial_out = out.with_extension("mp3.partial");
         if out.exists() {
             return Ok(());
         }
@@ -91,13 +92,20 @@ pub fn convert_bpm(
             "-vn".into(), "-ar".into(), "48000".into(), "-ac".into(), "2".into(),
             "-b:a".into(), "320k".into(), "-codec:a".into(), "libmp3lame".into(),
             "-preset".into(), preset,
-            out.to_string_lossy().to_string(),
+            partial_out.to_string_lossy().to_string(),
         ];
         
         let result = shared::run_ffmpeg(&args, None, prog_tx, name, cancel.clone());
 
         let _ = fs::remove_file(&tmp);
         let _ = fs::remove_dir_all(&tmp_dir);
+        
+        if result.is_ok() && !cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = fs::rename(&partial_out, &out);
+        } else {
+            let _ = fs::remove_file(&partial_out);
+        }
+
         result
     })
 }

@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use image::{imageops, RgbImage};
+use image::{imageops};
+use std::io::Write;
 use super::{shared, CancelFlag, ProgressTx};
 
 fn list_images(dir: &Path) -> Result<Vec<PathBuf>, String> {
@@ -25,6 +26,7 @@ pub fn convert_clouds(
 ) -> Result<(), String> {
     if is_folder && stitch_images {
         let out = file_path.with_file_name(format!("{}_clouds.mp4", file_path.file_name().unwrap_or_default().to_string_lossy()));
+        let partial_out = out.with_extension("mp4.partial");
         if out.exists() { return Ok(()); }
 
         let _ = tx.send(super::Progress::Init { total: 1 });
@@ -36,47 +38,92 @@ pub fn convert_clouds(
             return Err("No PNG/JPG images found in the selected folder".into());
         }
 
-        let (w, h) = (750u32, 360u32);
-        let total_w = w * (page_files.len() as u32 + 1);
-        let mut strip = RgbImage::new(total_w, h);
-
-        for (i, p) in page_files.iter().enumerate() {
+        // LOAD AND RESIZE IMAGES (Keeps memory very low compared to full strip)
+        let mut images = Vec::new();
+        for p in &page_files {
             if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 return Err("Cancelled.".into());
             }
             let img = image::open(p).map_err(|e| format!("open {}: {e}", p.display()))?.to_rgb8();
-            let resized = imageops::resize(&img, w, h, imageops::FilterType::Triangle);
-            imageops::replace(&mut strip, &resized, (i as i64) * w as i64, 0);
+            let resized = imageops::resize(&img, 750, 360, imageops::FilterType::Triangle);
+            images.push(resized);
         }
-
-        let tmp_dir = shared::make_temp_dir("clouds")?;
-        let strip_png = tmp_dir.join("strip.png");
-        image::DynamicImage::ImageRgb8(strip).save(&strip_png).map_err(|e| format!("save strip: {e}"))?;
 
         let video_dur = 12.0 * 60.0;
         let fps = 25.0;
         let total_frames = (video_dur * fps) as usize;
-        let vf = format!("crop={w}:{h}:x=(iw-{w})*t/{video_dur}:y=0");
         
         let args: Vec<String> = vec![
-            "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(), "-stats".into(),
-            "-loop".into(), "1".into(), "-i".into(), strip_png.to_string_lossy().to_string(),
-            "-vf".into(), vf, "-t".into(), video_dur.to_string(),
-            "-r".into(), fps.to_string(), "-c:v".into(), "libx264".into(),
+            "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(),
+            "-f".into(), "rawvideo".into(), "-pix_fmt".into(), "rgb24".into(),
+            "-s".into(), "750x360".into(), "-r".into(), fps.to_string(),
+            "-i".into(), "pipe:0".into(), "-c:v".into(), "libx264".into(),
             "-preset".into(), shared::ffmpeg_preset(), "-pix_fmt".into(), "yuv420p".into(),
-            out.to_string_lossy().to_string(),
+            partial_out.to_string_lossy().to_string(),
         ];
         
-        let result = shared::run_ffmpeg(&args, Some(total_frames), &tx, &stem, cancel.clone());
+        let total_virtual_w = images.len() as f32 * 750.0;
 
-        if !cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        // STREAM FRAMES DIRECTLY TO FFMPEG TO SAVE MASSIVE CPU/RAM
+        let result = shared::run_ffmpeg_stream(&args, &tx, &stem, cancel.clone(), |stdin| {
+            let mut frame = vec![0u8; 750 * 360 * 3];
+            for f in 0..total_frames {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) { return Err("Cancelled.".into()); }
+                
+                let progress = f as f32 / (total_frames as f32 - 1.0).max(1.0);
+                let x_offset = progress * (total_virtual_w - 750.0).max(0.0);
+                let img_idx1 = (x_offset / 750.0).floor() as usize;
+                let local_x = (x_offset % 750.0).round() as u32;
+
+                if img_idx1 >= images.len() - 1 {
+                    let img = &images[images.len() - 1];
+                    frame.copy_from_slice(img.as_raw());
+                } else {
+                    let img1 = &images[img_idx1];
+                    let img2 = &images[img_idx1 + 1];
+                    for y in 0..360 {
+                        let w1 = 750 - local_x;
+                        let w2 = local_x;
+                        
+                        let src1_s = (y * 750 + local_x) as usize * 3;
+                        let src1_e = (y * 750 + 750) as usize * 3;
+                        let dst1_s = (y * 750) as usize * 3;
+                        let dst1_e = (y * 750 + w1) as usize * 3;
+                        frame[dst1_s..dst1_e].copy_from_slice(&img1.as_raw()[src1_s..src1_e]);
+
+                        if w2 > 0 {
+                            let src2_s = (y * 750) as usize * 3;
+                            let src2_e = (y * 750 + w2) as usize * 3;
+                            let dst2_s = (y * 750 + w1) as usize * 3;
+                            let dst2_e = (y * 750 + 750) as usize * 3;
+                            frame[dst2_s..dst2_e].copy_from_slice(&img2.as_raw()[src2_s..src2_e]);
+                        }
+                    }
+                }
+
+                if stdin.write_all(&frame).is_err() { break; }
+                
+                if f % 250 == 0 {
+                    let _ = tx.send(super::Progress::Update {
+                        name: stem.clone(),
+                        fraction: f as f32 / total_frames as f32,
+                    });
+                }
+            }
+            Ok(())
+        });
+
+        if result.is_ok() && !cancel.load(std::sync::atomic::Ordering::Relaxed) {
             let _ = tx.send(super::Progress::Done { name: stem });
+            let _ = fs::rename(&partial_out, &out);
+        } else {
+            let _ = fs::remove_file(&partial_out);
         }
-        let _ = fs::remove_dir_all(&tmp_dir);
         result
     } else {
         shared::process_files(file_path, is_folder, tx, cancel.clone(), |pdf, name, prog_tx| {
             let out = pdf.with_file_name(format!("{name}.mp4"));
+            let partial_out = out.with_extension("mp4.partial");
             if out.exists() {
                 return Ok(());
             }
@@ -100,33 +147,27 @@ pub fn convert_clouds(
                 return Err("pdftoppm produced no PNGs".into());
             }
 
-            let (w, h) = (750u32, 360u32);
-            let total_w = w * (page_files.len() as u32 + 1);
-            let mut strip = RgbImage::new(total_w, h);
-
-            for (i, p) in page_files.iter().enumerate() {
+            // LOAD AND RESIZE IMAGES
+            let mut images = Vec::new();
+            for p in &page_files {
                 if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                     let _ = fs::remove_dir_all(&tmp_dir);
                     return Err("Cancelled.".into());
                 }
                 let img = image::open(p).map_err(|e| format!("open {}: {e}", p.display()))?.to_rgb8();
-                let resized = imageops::resize(&img, w, h, imageops::FilterType::Triangle);
-                imageops::replace(&mut strip, &resized, (i as i64) * w as i64, 0);
+                let resized = imageops::resize(&img, 750, 360, imageops::FilterType::Triangle);
+                images.push(resized);
             }
-
-            let strip_png = tmp_dir.join("strip.png");
-            image::DynamicImage::ImageRgb8(strip).save(&strip_png).map_err(|e| format!("save strip: {e}"))?;
 
             let video_dur = 12.0 * 60.0;
             let fps = 25.0;
             let total_frames = (video_dur * fps) as usize;
-            let vf = format!("crop={w}:{h}:x=(iw-{w})*t/{video_dur}:y=0");
             
             let mut args: Vec<String> = vec![
-                "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(), "-stats".into(),
-                "-loop".into(), "1".into(), "-i".into(), strip_png.to_string_lossy().to_string(),
-                "-vf".into(), vf, "-t".into(), video_dur.to_string(),
-                "-r".into(), fps.to_string(), "-c:v".into(), "libx264".into(),
+                "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(),
+                "-f".into(), "rawvideo".into(), "-pix_fmt".into(), "rgb24".into(),
+                "-s".into(), "750x360".into(), "-r".into(), fps.to_string(),
+                "-i".into(), "pipe:0".into(), "-c:v".into(), "libx264".into(),
                 "-preset".into(), shared::ffmpeg_preset(), "-pix_fmt".into(), "yuv420p".into(),
             ];
             
@@ -134,11 +175,66 @@ pub fn convert_clouds(
                 args.push("-threads".into());
                 args.push("2".into());
             }
-            args.push(out.to_string_lossy().to_string());
+            args.push(partial_out.to_string_lossy().to_string());
             
-            let result = shared::run_ffmpeg(&args, Some(total_frames), prog_tx, name, cancel.clone());
+            let total_virtual_w = images.len() as f32 * 750.0;
+
+            let result = shared::run_ffmpeg_stream(&args, prog_tx, name, cancel.clone(), |stdin| {
+                let mut frame = vec![0u8; 750 * 360 * 3];
+                for f in 0..total_frames {
+                    if cancel.load(std::sync::atomic::Ordering::Relaxed) { return Err("Cancelled.".into()); }
+                    
+                    let progress = f as f32 / (total_frames as f32 - 1.0).max(1.0);
+                    let x_offset = progress * (total_virtual_w - 750.0).max(0.0);
+                    let img_idx1 = (x_offset / 750.0).floor() as usize;
+                    let local_x = (x_offset % 750.0).round() as u32;
+
+                    if img_idx1 >= images.len() - 1 {
+                        let img = &images[images.len() - 1];
+                        frame.copy_from_slice(img.as_raw());
+                    } else {
+                        let img1 = &images[img_idx1];
+                        let img2 = &images[img_idx1 + 1];
+                        for y in 0..360 {
+                            let w1 = 750 - local_x;
+                            let w2 = local_x;
+                            
+                            let src1_s = (y * 750 + local_x) as usize * 3;
+                            let src1_e = (y * 750 + 750) as usize * 3;
+                            let dst1_s = (y * 750) as usize * 3;
+                            let dst1_e = (y * 750 + w1) as usize * 3;
+                            frame[dst1_s..dst1_e].copy_from_slice(&img1.as_raw()[src1_s..src1_e]);
+
+                            if w2 > 0 {
+                                let src2_s = (y * 750) as usize * 3;
+                                let src2_e = (y * 750 + w2) as usize * 3;
+                                let dst2_s = (y * 750 + w1) as usize * 3;
+                                let dst2_e = (y * 750 + 750) as usize * 3;
+                                frame[dst2_s..dst2_e].copy_from_slice(&img2.as_raw()[src2_s..src2_e]);
+                            }
+                        }
+                    }
+
+                    if stdin.write_all(&frame).is_err() { break; }
+                    
+                    if f % 250 == 0 {
+                        let _ = prog_tx.send(super::Progress::Update {
+                            name: name.to_string(),
+                            fraction: f as f32 / total_frames as f32,
+                        });
+                    }
+                }
+                Ok(())
+            });
 
             let _ = fs::remove_dir_all(&tmp_dir);
+            
+            if result.is_ok() && !cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                let _ = fs::rename(&partial_out, &out);
+            } else {
+                let _ = fs::remove_file(&partial_out);
+            }
+
             result
         })
     }
