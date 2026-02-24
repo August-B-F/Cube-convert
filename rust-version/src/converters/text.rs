@@ -24,15 +24,42 @@ pub fn convert_text(
             return Ok(());
         }
 
-        let mut text = shared::extract_text(pdf)?;
-        text = text.replace('\n', " ").replace('\r', " ").replace('\t', " ");
+        let text_raw = shared::extract_text(pdf)?;
+        
+        // Critical Fix #1: PDF extraction pulls out hundreds of invisible padding spaces.
+        // This is why Rust's text width was 15 minutes longer than FFmpeg's in the past!
+        // We now collapse all consecutive whitespaces into a single space.
+        let mut cleaned = String::with_capacity(text_raw.len());
+        let mut last_was_space = false;
+        for c in text_raw.chars() {
+            if c.is_whitespace() {
+                if !last_was_space {
+                    cleaned.push(' ');
+                    last_was_space = true;
+                }
+            } else {
+                cleaned.push(c);
+                last_was_space = false;
+            }
+        }
+        let text = cleaned.trim().to_string();
         if text.trim().is_empty() { return Err("No text found".into()); }
 
         let frame_w = 600u32;
         let frame_h = 224u32;
-        let fps = 30.0f32;
-        let speed_px_per_sec = 5.0f32 * fps;
-        let scale = Scale::uniform(frame_h as f32 * 0.6);
+        
+        let fps = 60.0f32; 
+        
+        // Critical Fix #2: Eliminate "Choppiness" and "0.5GB File Size".
+        // Instead of calculating a fractional speed (e.g., 3.73 pixels per frame), we lock 
+        // it to EXACTLY 3 pixels per frame. Fractional speeds cause the font's anti-aliased 
+        // edges to "shimmer" every frame, which looks choppy and destroys video compression 
+        // (causing a 10x file size explosion). Integer steps compress flawlessly.
+        let speed_px_per_frame = 3; 
+        let speed_px_per_sec = (speed_px_per_frame as f32) * fps; 
+        
+        let font_size_px = (frame_h as f32 * 0.6).round() as u32;
+        let scale = Scale::uniform(font_size_px as f32);
 
         let mut total_text_w = 0.0f32;
         let mut last = None;
@@ -44,31 +71,32 @@ pub fn convert_text(
         }
 
         let total_scroll_px = total_text_w + frame_w as f32;
-        let duration = (total_scroll_px / speed_px_per_sec).max(1.0);
-        let total_frames = (duration * fps) as usize;
+        // Add 1 second of padding so it completely clears the screen
+        let duration = (total_scroll_px / speed_px_per_sec) + 1.0;
+        let total_frames = (duration * fps).ceil() as usize;
 
         let tmp_dir = shared::make_temp_dir("text")?;
         
         let text_file = tmp_dir.join("scroll_text.txt");
-        fs::write(&text_file, text).map_err(|e| e.to_string())?;
+        fs::write(&text_file, &text).map_err(|e| e.to_string())?;
 
         let hex_color = format!("0x{:02x}{:02x}{:02x}", color[0], color[1], color[2]);
         
         let font_p = font_path.to_string_lossy().replace('\\', "/").replace(':', "\\:");
         let text_p = text_file.to_string_lossy().replace('\\', "/").replace(':', "\\:");
 
-        // The x calculation perfectly synchronizes FFmpeg's internal rendered text_w with our duration.
-        // It starts exactly at w (off-screen right) and ends exactly at -text_w (off-screen left).
+        // x=w-n*3 perfectly enforces integer pixel movement. 'n' is FFmpeg's frame counter.
         let filter_str = format!(
             "color=c=black:s={frame_w}x{frame_h}:d={duration} [bg]; \
             [bg]drawtext=fontfile='{font_p}':textfile='{text_p}':\
             fontcolor={hex_color}:fontsize={fontsize}:y=(h-text_h)/2:\
-            x=w-(t/{duration})*(w+text_w) [out]",
+            x=w-n*{speed} [out]",
             duration=duration,
             font_p=font_p,
             text_p=text_p,
             hex_color=hex_color,
-            fontsize=scale.y
+            fontsize=font_size_px,
+            speed=speed_px_per_frame
         );
 
         let mut args: Vec<String> = vec![
@@ -77,7 +105,11 @@ pub fn convert_text(
             "-map".into(), "[out]".into(),
             "-t".into(), duration.to_string(),
             "-r".into(), fps.to_string(), "-c:v".into(), "libx264".into(),
-            "-preset".into(), shared::ffmpeg_preset(), "-pix_fmt".into(), "yuv420p".into(),
+            "-preset".into(), shared::ffmpeg_preset(), 
+            // Optimize explicitly for flat animations to massively compress the file size
+            "-crf".into(), "26".into(), 
+            "-tune".into(), "animation".into(),
+            "-pix_fmt".into(), "yuv420p".into(),
         ];
         
         if is_folder {
