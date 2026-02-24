@@ -29,9 +29,6 @@ pub fn convert_text(
         let mut cleaned = String::with_capacity(text_raw.len());
         let mut last_was_space = false;
         for c in text_raw.chars() {
-            // CRITICAL: FFmpeg's drawtext filter uses C-strings internally. 
-            // If the PDF text contains a hidden null byte (\0), FFmpeg will immediately 
-            // truncate the text at that exact byte.
             if c == '\0' { continue; }
             
             if c.is_whitespace() {
@@ -66,9 +63,11 @@ pub fn convert_text(
             last = Some(g.id());
         }
 
-        // Added a slightly larger margin (3.0 instead of 2.0) to ensure it clears the screen entirely
-        // even if FFmpeg renders the font slightly wider than rusttype estimates.
-        let total_scroll_px = total_text_w + (frame_w as f32 * 3.0);
+        // The text starts at x = frame_w (fully off-screen right)
+        // It needs to travel until x = -total_text_w (fully off-screen left)
+        // Total travel distance = frame_w + total_text_w.
+        // Add a small 100px buffer (~0.8 seconds) to let it breathe before cutting.
+        let total_scroll_px = total_text_w + frame_w as f32 + 100.0;
         let total_frames = (total_scroll_px / speed_px_per_frame as f32).ceil() as usize;
         let duration = total_frames as f32 / fps;
 
