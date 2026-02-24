@@ -38,6 +38,8 @@ const COLOR_TEXT: egui::Color32 = egui::Color32::from_rgb(33, 37, 13);
 const COLOR_RED: egui::Color32 = egui::Color32::from_rgb(109, 74, 56);
 const COLOR_ACCENT: egui::Color32 = egui::Color32::from_rgb(62, 84, 114);
 const COLOR_FADED: egui::Color32 = egui::Color32::from_rgb(117, 122, 97);
+const COLOR_WHITE: egui::Color32 = egui::Color32::from_rgb(255, 255, 255);
+const COLOR_BLACK: egui::Color32 = egui::Color32::from_rgb(0, 0, 0);
 
 struct CubeConvertApp {
     selected_tab: ConversionType,
@@ -161,6 +163,7 @@ impl CubeConvertApp {
         visuals.selection.bg_fill = COLOR_TEXT;
         visuals.selection.stroke = egui::Stroke::new(1.0, COLOR_BG);
 
+        // Fix for white backgrounds: explicitly set widget backgrounds to COLOR_BG
         visuals.widgets.noninteractive.bg_fill = COLOR_BG;
         visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(2.0, COLOR_TEXT);
         
@@ -179,14 +182,23 @@ impl CubeConvertApp {
         visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, COLOR_BG);
         visuals.widgets.active.rounding = egui::Rounding::same(0.0);
         
+        // Button-specific fixes for uniform styling
+        visuals.widgets.open.bg_fill = COLOR_BG;
+        visuals.widgets.open.bg_stroke = egui::Stroke::new(2.0, COLOR_TEXT);
+        visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0, COLOR_TEXT);
+        visuals.widgets.open.rounding = egui::Rounding::same(0.0);
+        
         visuals.window_rounding = egui::Rounding::same(0.0);
         visuals.window_stroke = egui::Stroke::new(3.0, COLOR_TEXT);
+        visuals.popup_shadow = egui::epaint::Shadow { extrusion: 0.0, color: COLOR_TEXT };
 
         ctx.set_visuals(visuals);
 
         let mut style = (*ctx.style()).clone();
         style.spacing.button_padding = egui::vec2(16.0, 8.0);
         style.spacing.item_spacing = egui::vec2(12.0, 16.0);
+        // Fix text wrapping and sizing
+        style.wrap_mode = Some(egui::TextWrapMode::Wrap);
         ctx.set_style(style);
     }
 
@@ -210,7 +222,7 @@ impl CubeConvertApp {
         }
 
         if ui.is_rect_visible(rect) {
-            let visuals = ui.style().interact(&response);
+            let _visuals = ui.style().interact(&response);
             
             let bg_color = if is_selected {
                 COLOR_TEXT
@@ -258,20 +270,22 @@ impl eframe::App for CubeConvertApp {
         self.apply_retro_theme(ctx);
         self.time_active += ctx.input(|i| i.stable_dt);
 
-        // Render Error Popup if needed
+        // Render Error Popup if needed (Improved layout)
         if self.show_error_popup {
             egui::Window::new(egui::RichText::new("! ERROR !").color(COLOR_BG).background_color(COLOR_RED).size(16.0))
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .frame(egui::Frame::window(&ctx.style()).fill(COLOR_BG).stroke(egui::Stroke::new(4.0, COLOR_TEXT)).inner_margin(16.0))
                 .show(ctx, |ui| {
-                    ui.add_space(8.0);
                     ui.label(egui::RichText::new(&self.popup_error_msg).color(COLOR_TEXT).strong().size(14.0));
-                    ui.add_space(16.0);
-                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                        if ui.button("[ OK ]").clicked() {
-                            self.show_error_popup = false;
-                        }
+                    ui.add_space(20.0);
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.button("[ OK ]").clicked() {
+                                self.show_error_popup = false;
+                            }
+                        });
                     });
                 });
         }
@@ -350,31 +364,139 @@ impl eframe::App for CubeConvertApp {
             }
         }
 
-        // Main Window Content
-        egui::CentralPanel::default().show(ctx, |ui| {
-            
-            // Top Blinking cursor block (Retro terminal feel)
+        // TopPanel for execute button to prevent it from being stuck at the bottom edge and full width
+        // We move the execution button and progress info here to have predictable spacing.
+        egui::TopBottomPanel::bottom("execution_panel")
+            .frame(egui::Frame::none().inner_margin(egui::Margin::symmetric(24.0, 16.0)).fill(COLOR_BG))
+            .show(ctx, |ui| {
+            // Bottom execution area
             ui.horizontal(|ui| {
-                ui.add_space(4.0);
-                let blink = (self.time_active * 2.0).sin() > 0.0;
-                if blink {
-                    ui.painter().rect_filled(
-                        egui::Rect::from_min_size(ui.cursor().min, egui::vec2(10.0, 16.0)),
-                        0.0,
-                        COLOR_TEXT
-                    );
-                }
-                ui.add_space(14.0);
-                ui.label(egui::RichText::new("CUBE-CONVERT_SYSTEM").size(14.0));
+                // Status & Progress line left aligned
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    if self.is_converting {
+                        let fraction_sum: f32 = self.file_fractions.values().sum();
+                        let progress = if self.progress_total > 0 {
+                            (self.progress_current as f32 + fraction_sum) / self.progress_total as f32
+                        } else {
+                            0.0
+                        };
+                        let progress = progress.clamp(0.0, 1.0);
+
+                        ui.horizontal(|ui| {
+                            // Retro blocky progress bar with integrated text
+                            let desired_size = egui::vec2(400.0, 32.0);
+                            let (rect, _response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
+                            
+                            ui.painter().rect_stroke(rect, 0.0, egui::Stroke::new(2.0, COLOR_TEXT));
+                            
+                            // Draw segmented blocks
+                            let num_blocks = 25.0;
+                            let block_width = (rect.width() - 4.0) / num_blocks;
+                            let blocks_to_fill = (progress * num_blocks) as i32;
+                            
+                            for i in 0..blocks_to_fill {
+                                let mut block_rect = rect;
+                                block_rect.min.x += 2.0 + (i as f32 * block_width);
+                                block_rect.max.x = block_rect.min.x + block_width - 2.0;
+                                block_rect.min.y += 2.0;
+                                block_rect.max.y -= 2.0;
+                                ui.painter().rect_filled(block_rect, 0.0, COLOR_TEXT);
+                            }
+                            
+                            let percentage = (progress * 100.0).round() as u32;
+                            let prog_text = if self.progress_total > 1 {
+                                format!("{:02}%  [{}/{}]", percentage, self.progress_current, self.progress_total)
+                            } else {
+                                format!("{:02}%", percentage)
+                            };
+
+                            // Draw text in middle of progress bar with contrasting color
+                            let text_pos = rect.center();
+                            
+                            // Render text twice for shadow/contrast effect
+                            ui.painter().text(
+                                text_pos + egui::vec2(1.0, 1.0),
+                                egui::Align2::CENTER_CENTER,
+                                &prog_text,
+                                egui::FontId::proportional(16.0),
+                                COLOR_BG,
+                            );
+                            ui.painter().text(
+                                text_pos,
+                                egui::Align2::CENTER_CENTER,
+                                &prog_text,
+                                egui::FontId::proportional(16.0),
+                                COLOR_TEXT,
+                            );
+                        });
+
+                        if !self.current_file.is_empty() && self.progress_total > 1 {
+                            ui.add_space(8.0);
+                            let frames = ["|", "/", "-", "\\\\"];
+                            let frame_idx = ((self.time_active * 10.0) as usize) % frames.len();
+                            ui.label(format!("{} {}", frames[frame_idx], self.current_file));
+                        }
+                    } else if !self.status_msg.is_empty() {
+                        if self.status_msg == "Done." {
+                            ui.label(egui::RichText::new("> PROCESS COMPLETE.").color(COLOR_TEXT).strong().size(16.0));
+                            ui.add_space(10.0);
+                            if ui.button("[ OPEN DIR ]").clicked() {
+                                if let Some(path) = &self.selected_path {
+                                    let dir = if self.is_folder {
+                                        path.clone()
+                                    } else {
+                                        path.parent().unwrap_or(Path::new("")).to_path_buf()
+                                    };
+                                    #[cfg(target_os = "windows")]
+                                    let _ = std::process::Command::new("explorer").arg(dir).spawn();
+                                    #[cfg(target_os = "macos")]
+                                    let _ = std::process::Command::new("open").arg(dir).spawn();
+                                    #[cfg(target_os = "linux")]
+                                    let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+                                }
+                            }
+                        } else if self.status_msg == "Cancelled." || self.status_msg == "ABORTING..." {
+                            ui.label(egui::RichText::new(format!("> {}", self.status_msg)).color(COLOR_RED).strong().size(16.0));
+                        } else if self.status_msg.starts_with("Error") || self.status_msg.starts_with("An error") {
+                            ui.label(egui::RichText::new(format!("> {}", self.status_msg)).color(COLOR_RED).strong().size(16.0));
+                        } else {
+                            let blink = (self.time_active * 4.0).sin() > 0.0;
+                            let cursor = if blink { "_" } else { " " };
+                            ui.label(egui::RichText::new(format!("> {}{}", self.status_msg, cursor)).strong().size(16.0));
+                        }
+                    }
+                });
+
+                // Execute/Abort button right aligned
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if !self.is_converting {
+                        // Standard button, not filling width
+                        let btn_text = egui::RichText::new("EXECUTE").size(18.0).strong();
+                        let btn = egui::Button::new(btn_text).min_size(egui::vec2(120.0, 40.0));
+                        if ui.add_enabled(self.selected_path.is_some(), btn).clicked() {
+                            self.start_conversion(ctx.clone());
+                        }
+                    } else {
+                        let btn_text = egui::RichText::new("ABORT").size(18.0).strong();
+                        let btn = egui::Button::new(btn_text).min_size(egui::vec2(120.0, 40.0));
+                        if ui.button(btn).clicked() {
+                            self.cancel_flag.store(true, Ordering::Relaxed);
+                            self.status_msg = "ABORTING...".to_string();
+                        }
+                    }
+                });
             });
-            
+        });
+
+        // Main Window Content
+        egui::CentralPanel::default().frame(egui::Frame::none().fill(COLOR_BG)).show(ctx, |ui| {
             ui.add_space(20.0);
 
             // TABS
             ui.add_enabled_ui(!self.is_converting, |ui| {
                 let mut tab_changed = false;
                 ui.horizontal(|ui| {
-                    ui.add_space(8.0);
+                    ui.add_space(24.0); // Consistent left margin
                     if self.custom_tab(ui, ConversionType::Wind, "WIND", ctx) { self.selected_tab = ConversionType::Wind; tab_changed = true; }
                     if self.custom_tab(ui, ConversionType::Bpm, "BPM", ctx) { self.selected_tab = ConversionType::Bpm; tab_changed = true; }
                     if self.custom_tab(ui, ConversionType::Clouds, "CLOUDS", ctx) { self.selected_tab = ConversionType::Clouds; tab_changed = true; }
@@ -396,7 +518,7 @@ impl eframe::App for CubeConvertApp {
                 ui.cursor().top() - 2.0,
                 egui::Stroke::new(2.0, COLOR_TEXT),
             );
-            ui.add_space(20.0);
+            ui.add_space(24.0);
 
             let desc = match self.selected_tab {
                 ConversionType::Wind      => "Convert wind intensities (PDF) -> MP3",
@@ -412,16 +534,16 @@ impl eframe::App for CubeConvertApp {
             let desc_to_show = if char_count > desc.len() { desc } else { &desc[..char_count] };
             
             ui.horizontal(|ui| {
-               ui.add_space(10.0);
+               ui.add_space(24.0); // Consistent left margin
                ui.label(egui::RichText::new(desc_to_show).size(20.0).strong());
             });
             ctx.request_repaint(); // Keep repainting for the typing effect
             
-            ui.add_space(24.0);
+            ui.add_space(32.0);
 
             // Input Area
             ui.horizontal(|ui| {
-                 ui.add_space(10.0);
+                 ui.add_space(24.0); // Consistent left margin
                  ui.add_enabled_ui(!self.is_converting, |ui| {
                     if ui.button("[ SELECT FILE ]").clicked() {
                         let mut dialog = FileDialog::new().add_filter("PDF", &["pdf"]);
@@ -434,7 +556,7 @@ impl eframe::App for CubeConvertApp {
                             self.time_active = 0.0; // Reset typing anim on change
                         }
                     }
-                    ui.add_space(8.0);
+                    ui.add_space(16.0);
                     if ui.button("[ SELECT FOLDER ]").clicked() {
                         let mut dialog = FileDialog::new();
                         if let Some(dir) = &self.last_dir { dialog = dialog.set_directory(dir); }
@@ -449,11 +571,11 @@ impl eframe::App for CubeConvertApp {
                 });
             });
 
-            ui.add_space(16.0);
+            ui.add_space(20.0);
 
             // Path display box
             ui.horizontal(|ui| {
-                 ui.add_space(40.0);
+                 ui.add_space(24.0); // Consistent left margin
                  if let Some(path) = &self.selected_path {
                     egui::Frame::none()
                         .fill(COLOR_BG)
@@ -474,35 +596,34 @@ impl eframe::App for CubeConvertApp {
                 }
             });
             
-            ui.add_space(24.0);
+            ui.add_space(32.0);
 
             // Module specific options enclosed in retro frames
             if self.selected_tab == ConversionType::Clouds && self.is_folder {
                 ui.horizontal(|ui| {
-                     ui.add_space(10.0);
+                     ui.add_space(24.0); // Consistent left margin
                      egui::Frame::none()
-                        .stroke(egui::Stroke::new(1.0, COLOR_FADED))
+                        .stroke(egui::Stroke::new(2.0, COLOR_TEXT))
                         .inner_margin(egui::Margin::symmetric(16.0, 12.0))
                         .show(ui, |ui| {
                             ui.add_enabled_ui(!self.is_converting, |ui| {
-                                ui.label("> CLOUD DIRECTORY MODE:");
-                                ui.add_space(8.0);
                                 ui.horizontal(|ui| {
+                                    ui.label("> CLOUD DIRECTORY MODE:");
+                                    ui.add_space(16.0);
                                     ui.radio_value(&mut self.clouds_folder_mode, CloudsFolderMode::StitchImages, "[ STITCH ]");
-                                    ui.add_space(12.0);
+                                    ui.add_space(16.0);
                                     ui.radio_value(&mut self.clouds_folder_mode, CloudsFolderMode::BatchPdf, "[ BATCH ]");
                                 });
                             });
                         });
                 });
-                ui.add_space(16.0);
             }
 
             if self.selected_tab == ConversionType::Text {
                 ui.horizontal(|ui| {
-                    ui.add_space(10.0);
+                    ui.add_space(24.0); // Consistent left margin
                     egui::Frame::none()
-                        .stroke(egui::Stroke::new(1.0, COLOR_FADED))
+                        .stroke(egui::Stroke::new(2.0, COLOR_TEXT))
                         .inner_margin(egui::Margin::symmetric(16.0, 12.0))
                         .show(ui, |ui| {
                         ui.add_enabled_ui(!self.is_converting, |ui| {
@@ -510,28 +631,22 @@ impl eframe::App for CubeConvertApp {
                                 ui.label("> COLOR:");
                                 ui.add_space(8.0);
                                 // Draw a big square for the current color
-                                let (rect, response) = ui.allocate_exact_size(egui::vec2(40.0, 20.0), egui::Sense::click());
+                                let (rect, response) = ui.allocate_exact_size(egui::vec2(40.0, 24.0), egui::Sense::click());
                                 if ui.is_rect_visible(rect) {
                                     let current_c = egui::Color32::from_rgb(self.rgb_color[0], self.rgb_color[1], self.rgb_color[2]);
                                     ui.painter().rect(rect, 0.0, current_c, egui::Stroke::new(2.0, COLOR_TEXT));
                                 }
-                                // Native color picker on click
-                                if response.clicked() {
-                                    // Egui doesn't easily allow popping up the color picker from a custom widget,
-                                    // So we overlay an invisible color edit button
-                                }
+                                
                                 // Overlay actual color edit button
                                 ui.put(egui::Rect::from_min_size(rect.min, rect.size()), |ui: &mut egui::Ui| {
                                    let r = ui.color_edit_button_srgb(&mut self.rgb_color);
                                    // Make it invisible by just taking up space but not drawing over our custom rect
                                    r
                                 });
-                            });
-                            
-                            ui.add_space(16.0);
-                            
-                            ui.horizontal(|ui| {
-                                ui.label("  PALETTE:");
+                                
+                                ui.add_space(24.0);
+                                
+                                ui.label("PALETTE:");
                                 ui.add_space(8.0);
                                 for color in self.color_history.clone() {
                                     let (r, g, b) = (color[0], color[1], color[2]);
@@ -540,7 +655,7 @@ impl eframe::App for CubeConvertApp {
                                     let (rect, response) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::click());
                                     if ui.is_rect_visible(rect) {
                                         let stroke_color = if response.hovered() {
-                                            COLOR_BG
+                                            COLOR_WHITE
                                         } else {
                                             COLOR_TEXT
                                         };
@@ -559,118 +674,7 @@ impl eframe::App for CubeConvertApp {
                         });
                     });
                 });
-                ui.add_space(16.0);
             }
-
-            // Bottom execution area
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::RIGHT), |ui| {
-                ui.horizontal(|ui| {
-                    // Execute Button aligned to right
-                    if !self.is_converting {
-                        // A large, satisfying execute button
-                        let btn_text = egui::RichText::new("   EXECUTE   ").size(18.0).strong();
-                        if ui.add_enabled(
-                            self.selected_path.is_some(),
-                            egui::Button::new(btn_text),
-                        ).clicked() {
-                            self.start_conversion(ctx.clone());
-                        }
-                    } else {
-                        let btn_text = egui::RichText::new("   ABORT   ").size(18.0).strong();
-                        if ui.button(btn_text).clicked() {
-                            self.cancel_flag.store(true, Ordering::Relaxed);
-                            self.status_msg = "ABORTING...".to_string();
-                        }
-                    }
-                });
-
-                // Status & Progress line left aligned
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                    if self.is_converting {
-                        ui.add_space(8.0);
-                        let fraction_sum: f32 = self.file_fractions.values().sum();
-                        let progress = if self.progress_total > 0 {
-                            (self.progress_current as f32 + fraction_sum) / self.progress_total as f32
-                        } else {
-                            0.0
-                        };
-                        let progress = progress.clamp(0.0, 1.0);
-
-                        ui.horizontal(|ui| {
-                            ui.add_space(10.0);
-                            
-                            // Retro blocky progress bar
-                            let desired_size = egui::vec2(300.0, 24.0);
-                            let (rect, _response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
-                            
-                            ui.painter().rect_stroke(rect, 0.0, egui::Stroke::new(2.0, COLOR_TEXT));
-                            
-                            // Draw segmented blocks instead of smooth fill for retro feel
-                            let num_blocks = 20.0;
-                            let block_width = (rect.width() - 4.0) / num_blocks;
-                            let blocks_to_fill = (progress * num_blocks) as i32;
-                            
-                            for i in 0..blocks_to_fill {
-                                let mut block_rect = rect;
-                                block_rect.min.x += 2.0 + (i as f32 * block_width);
-                                block_rect.max.x = block_rect.min.x + block_width - 2.0;
-                                block_rect.min.y += 2.0;
-                                block_rect.max.y -= 2.0;
-                                ui.painter().rect_filled(block_rect, 0.0, COLOR_TEXT);
-                            }
-                            
-                            ui.add_space(10.0);
-                            let percentage = (progress * 100.0).round() as u32;
-                            ui.label(egui::RichText::new(format!("{:02}%", percentage)).size(18.0).strong());
-                        });
-
-                        if !self.current_file.is_empty() && self.progress_total > 1 {
-                            ui.horizontal(|ui| {
-                                ui.add_space(10.0);
-                                // Rotating slashes animation for processing
-                                let frames = ["|", "/", "-", "\\\\"];
-                                let frame_idx = ((self.time_active * 10.0) as usize) % frames.len();
-                                ui.label(format!("{} {} ({}/{})", frames[frame_idx], self.current_file, self.progress_current, self.progress_total));
-                            });
-                        }
-                    }
-
-                    if !self.status_msg.is_empty() {
-                        ui.add_space(8.0);
-                        ui.horizontal(|ui| {
-                            ui.add_space(10.0);
-                            if self.status_msg == "Done." {
-                                ui.label(egui::RichText::new("> PROCESS COMPLETE.").color(COLOR_TEXT).strong());
-                                ui.add_space(10.0);
-                                if ui.button("[ OPEN DIR ]").clicked() {
-                                    if let Some(path) = &self.selected_path {
-                                        let dir = if self.is_folder {
-                                            path.clone()
-                                        } else {
-                                            path.parent().unwrap_or(Path::new("")).to_path_buf()
-                                        };
-                                        #[cfg(target_os = "windows")]
-                                        let _ = std::process::Command::new("explorer").arg(dir).spawn();
-                                        #[cfg(target_os = "macos")]
-                                        let _ = std::process::Command::new("open").arg(dir).spawn();
-                                        #[cfg(target_os = "linux")]
-                                        let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
-                                    }
-                                }
-                            } else if self.status_msg == "Cancelled." || self.status_msg == "ABORTING..." {
-                                ui.label(egui::RichText::new(format!("> {}", self.status_msg)).color(COLOR_RED).strong());
-                            } else if self.status_msg.starts_with("Error") || self.status_msg.starts_with("An error") {
-                                ui.label(egui::RichText::new(format!("> {}", self.status_msg)).color(COLOR_RED).strong());
-                            } else {
-                                // Blinking typing effect for initializing
-                                let blink = (self.time_active * 4.0).sin() > 0.0;
-                                let cursor = if blink { "_" } else { " " };
-                                ui.label(egui::RichText::new(format!("> {}{}", self.status_msg, cursor)).strong());
-                            }
-                        });
-                    }
-                });
-            });
         });
 
         // Draw animated drag & drop overlay
