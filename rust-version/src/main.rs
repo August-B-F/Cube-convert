@@ -177,14 +177,15 @@ impl CubeConvertApp {
         visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, COLOR_BG);
         visuals.widgets.active.rounding = egui::Rounding::same(0.0);
         
+        // In older versions of egui (like 0.23-0.27), window_rounding is on visuals, not style.spacing.
+        visuals.window_rounding = egui::Rounding::same(0.0);
+        visuals.window_stroke = egui::Stroke::new(3.0, COLOR_TEXT);
+
         ctx.set_visuals(visuals);
 
         let mut style = (*ctx.style()).clone();
         style.spacing.button_padding = egui::vec2(12.0, 8.0);
         style.spacing.item_spacing = egui::vec2(8.0, 12.0);
-        style.spacing.window_rounding = egui::Rounding::same(0.0);
-        // Thick borders everywhere
-        style.visuals.window_stroke = egui::Stroke::new(3.0, COLOR_TEXT);
         ctx.set_style(style);
     }
 }
