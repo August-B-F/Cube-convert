@@ -25,13 +25,17 @@ pub fn convert_clouds(
     cancel: CancelFlag,
 ) -> Result<(), String> {
     if is_folder && stitch_images {
-        let out = file_path.with_file_name(format!("{}_clouds.mp4", file_path.file_name().unwrap_or_default().to_string_lossy()));
+        // Output folder logic for stitched output
+        let out_dir = file_path.join("Cube-Converted");
+        let _ = fs::create_dir_all(&out_dir);
+        let stem = file_path.file_name().unwrap_or_default().to_string_lossy();
+        let out = out_dir.join(format!("{}_clouds.mp4", stem));
         let partial_out = out.with_extension("tmp.mp4");
         if out.exists() { return Ok(()); }
 
         let _ = tx.send(super::Progress::Init { total: 1 });
-        let stem = file_path.file_name().unwrap_or_default().to_string_lossy().to_string();
-        let _ = tx.send(super::Progress::Start { name: stem.clone() });
+        let stem_str = stem.to_string();
+        let _ = tx.send(super::Progress::Start { name: stem_str.clone() });
 
         let page_files = list_images(file_path)?;
         if page_files.is_empty() {
@@ -69,7 +73,7 @@ pub fn convert_clouds(
         
         let total_virtual_w = images.len() as f32 * 750.0;
 
-        let result = shared::run_ffmpeg_stream(&args, &tx, &stem, cancel.clone(), |stdin| {
+        let result = shared::run_ffmpeg_stream(&args, &tx, &stem_str, cancel.clone(), |stdin| {
             let mut frame = vec![0u8; 750 * 360 * 3];
             for f in 0..total_frames {
                 if cancel.load(std::sync::atomic::Ordering::Relaxed) { return Err("Cancelled.".into()); }
@@ -109,7 +113,7 @@ pub fn convert_clouds(
                 
                 if f % 250 == 0 {
                     let _ = tx.send(super::Progress::Update {
-                        name: stem.clone(),
+                        name: stem_str.clone(),
                         fraction: f as f32 / total_frames as f32,
                     });
                 }
@@ -118,15 +122,15 @@ pub fn convert_clouds(
         });
 
         if result.is_ok() && !cancel.load(std::sync::atomic::Ordering::Relaxed) {
-            let _ = tx.send(super::Progress::Done { name: stem });
+            let _ = tx.send(super::Progress::Done { name: stem_str });
             let _ = fs::rename(&partial_out, &out);
         } else {
             let _ = fs::remove_file(&partial_out);
         }
         result
     } else {
-        shared::process_files(file_path, is_folder, tx, cancel.clone(), |pdf, name, prog_tx| {
-            let out = pdf.with_file_name(format!("{name}.mp4"));
+        shared::process_files(file_path, is_folder, tx, cancel.clone(), |pdf, out_dir, name, prog_tx| {
+            let out = out_dir.join(format!("{name}.mp4"));
             let partial_out = out.with_extension("tmp.mp4");
             if out.exists() {
                 return Ok(());

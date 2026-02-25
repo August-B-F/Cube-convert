@@ -17,8 +17,8 @@ pub fn convert_text(
     let font_data = fs::read(font_path).map_err(|e| e.to_string())?;
     let font = Font::try_from_vec(font_data).ok_or("Failed to load font")?;
 
-    shared::process_files(file_path, is_folder, tx, cancel.clone(), |pdf, name, prog_tx| {
-        let out = pdf.with_file_name(format!("{name}.mp4"));
+    shared::process_files(file_path, is_folder, tx, cancel.clone(), |pdf, out_dir, name, prog_tx| {
+        let out = out_dir.join(format!("{name}.mp4"));
         let partial_out = out.with_extension("tmp.mp4");
         if out.exists() {
             return Ok(());

@@ -9,8 +9,8 @@ pub fn convert_wind(
     tx: ProgressTx,
     cancel: CancelFlag,
 ) -> Result<(), String> {
-    shared::process_files(file_path, is_folder, tx, cancel.clone(), |pdf, name, prog_tx| {
-        let out = pdf.with_file_name(format!("{name}.mp3"));
+    shared::process_files(file_path, is_folder, tx, cancel.clone(), |pdf, out_dir, name, prog_tx| {
+        let out = out_dir.join(format!("{name}.mp3"));
         let partial_out = out.with_extension("tmp.mp3");
         if out.exists() {
             return Ok(());
