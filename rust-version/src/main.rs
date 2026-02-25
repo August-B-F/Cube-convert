@@ -134,7 +134,7 @@ impl Default for CubeConvertApp {
             is_converting: false,
             rgb_color,
             color_history,
-            clouds_folder_mode: CloudsFolderMode::StitchImages,
+            clouds_folder_mode: CloudsFolderMode::BatchPdf,
             status_msg: String::new(),
             show_error_popup: false,
             popup_error_msg: String::new(),
@@ -170,7 +170,7 @@ impl CubeConvertApp {
         }
         ctx.set_fonts(fonts);
 
-        let mut visuals = egui::Visuals::dark();
+        let mut visuals = egui::Visuals::light();
         
         visuals.window_fill = COLOR_BG;
         visuals.panel_fill = COLOR_BG;
@@ -182,7 +182,7 @@ impl CubeConvertApp {
         visuals.selection.bg_fill = COLOR_BG;
         visuals.selection.stroke = egui::Stroke::new(1.0, COLOR_TEXT);
 
-        visuals.widgets.noninteractive.bg_fill = COLOR_FADED;
+        visuals.widgets.noninteractive.bg_fill = COLOR_BG;
         visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(2.0, COLOR_TEXT);
         visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(2.0, COLOR_TEXT);
         
@@ -221,6 +221,7 @@ impl CubeConvertApp {
 
     fn custom_tab(&mut self, ui: &mut egui::Ui, tab: ConversionType, label: &str, ctx: &egui::Context) -> bool {
         let is_selected = self.selected_tab == tab;
+        let enabled = !self.is_converting;
         let mut clicked = false;
 
         let desired_size = egui::vec2(70.0, 30.0);
@@ -233,13 +234,15 @@ impl CubeConvertApp {
         let new_anim = current_anim + (anim_target - current_anim) * (dt * 15.0).min(1.0);
         self.tab_animations.insert(tab, new_anim);
         
-        if response.clicked() {
+        if enabled && response.clicked() {
             clicked = true;
         }
 
         if ui.is_rect_visible(rect) {
             let bg_color = if is_selected {
                 COLOR_TEXT
+            } else if !enabled {
+                COLOR_FADED // darken when disabled
             } else if response.hovered() {
                 COLOR_FADED
             } else {
@@ -288,7 +291,7 @@ impl eframe::App for CubeConvertApp {
                     ui.add_space(20.0);
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.add(egui::Button::new("[ OK ]")).clicked() {
+                            if ui.add(egui::Button::new("[ OK ]").fill(COLOR_BG)).clicked() {
                                 self.show_error_popup = false;
                             }
                         });
@@ -450,7 +453,7 @@ impl eframe::App for CubeConvertApp {
                             );
 
                             ui.add_space(16.0);
-                            if ui.add(egui::Button::new("[ OPEN DIR ]")).clicked() {
+                            if ui.add(egui::Button::new("[ OPEN DIR ]").fill(COLOR_BG)).clicked() {
                                 if let Some(path) = &self.selected_path {
                                     let dir = if self.is_folder {
                                         path.clone()
@@ -494,13 +497,21 @@ impl eframe::App for CubeConvertApp {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if !self.is_converting {
-                        let btn_text = egui::RichText::new("EXECUTE").size(18.0).strong().color(COLOR_TEXT);
-                        if ui.add_enabled(self.selected_path.is_some(), egui::Button::new(btn_text).min_size(egui::vec2(120.0, 40.0))).clicked() {
+                        let exec_enabled = self.selected_path.is_some();
+                        let exec_fill = if exec_enabled { COLOR_BG } else { COLOR_FADED };
+                        
+                        let mut btn_exec = egui::Button::new(egui::RichText::new("EXECUTE").size(18.0).strong().color(COLOR_TEXT))
+                            .fill(exec_fill)
+                            .min_size(egui::vec2(120.0, 40.0));
+                            
+                        if !exec_enabled { btn_exec = btn_exec.sense(egui::Sense::hover()); }
+                        
+                        if ui.add(btn_exec).clicked() && exec_enabled {
                             self.start_conversion(ctx.clone());
                         }
                     } else {
                         let btn_text = egui::RichText::new("ABORT").size(18.0).strong().color(COLOR_TEXT);
-                        if ui.add(egui::Button::new(btn_text).min_size(egui::vec2(120.0, 40.0))).clicked() {
+                        if ui.add(egui::Button::new(btn_text).fill(COLOR_BG).min_size(egui::vec2(120.0, 40.0))).clicked() {
                             self.cancel_flag.store(true, Ordering::Relaxed);
                             self.status_msg = "ABORTING...".to_string();
                         }
@@ -512,23 +523,21 @@ impl eframe::App for CubeConvertApp {
         egui::CentralPanel::default().frame(egui::Frame::none().fill(COLOR_BG)).show(ctx, |ui| {
             ui.add_space(20.0);
 
-            ui.add_enabled_ui(!self.is_converting, |ui| {
-                let mut tab_changed = false;
-                ui.horizontal(|ui| {
-                    ui.add_space(24.0);
-                    if self.custom_tab(ui, ConversionType::Wind, "WIND", ctx) { self.selected_tab = ConversionType::Wind; tab_changed = true; }
-                    if self.custom_tab(ui, ConversionType::Bpm, "BPM", ctx) { self.selected_tab = ConversionType::Bpm; tab_changed = true; }
-                    if self.custom_tab(ui, ConversionType::Clouds, "CLOUDS", ctx) { self.selected_tab = ConversionType::Clouds; tab_changed = true; }
-                    if self.custom_tab(ui, ConversionType::Rgb, "RGB", ctx) { self.selected_tab = ConversionType::Rgb; tab_changed = true; }
-                    if self.custom_tab(ui, ConversionType::Slideshow, "SLIDE", ctx) { self.selected_tab = ConversionType::Slideshow; tab_changed = true; }
-                    if self.custom_tab(ui, ConversionType::Text, "TEXT", ctx) { self.selected_tab = ConversionType::Text; tab_changed = true; }
-                });
-
-                if tab_changed {
-                    self.status_msg.clear();
-                    self.show_error_popup = false;
-                }
+            let mut tab_changed = false;
+            ui.horizontal(|ui| {
+                ui.add_space(24.0);
+                if self.custom_tab(ui, ConversionType::Wind, "WIND", ctx) { self.selected_tab = ConversionType::Wind; tab_changed = true; }
+                if self.custom_tab(ui, ConversionType::Bpm, "BPM", ctx) { self.selected_tab = ConversionType::Bpm; tab_changed = true; }
+                if self.custom_tab(ui, ConversionType::Clouds, "CLOUDS", ctx) { self.selected_tab = ConversionType::Clouds; tab_changed = true; }
+                if self.custom_tab(ui, ConversionType::Rgb, "RGB", ctx) { self.selected_tab = ConversionType::Rgb; tab_changed = true; }
+                if self.custom_tab(ui, ConversionType::Slideshow, "SLIDE", ctx) { self.selected_tab = ConversionType::Slideshow; tab_changed = true; }
+                if self.custom_tab(ui, ConversionType::Text, "TEXT", ctx) { self.selected_tab = ConversionType::Text; tab_changed = true; }
             });
+
+            if tab_changed {
+                self.status_msg.clear();
+                self.show_error_popup = false;
+            }
 
             let rect = ui.max_rect();
             ui.painter().hline(
@@ -560,31 +569,41 @@ impl eframe::App for CubeConvertApp {
 
             ui.horizontal(|ui| {
                  ui.add_space(24.0);
-                 ui.add_enabled_ui(!self.is_converting, |ui| {
-                    if ui.add(egui::Button::new("[ SELECT FILE ]")).clicked() {
-                        let mut dialog = FileDialog::new().add_filter("PDF", &["pdf"]);
-                        if let Some(dir) = &self.last_dir { dialog = dialog.set_directory(dir); }
-                        if let Some(path) = dialog.pick_file() {
-                            if let Some(parent) = path.parent() { self.last_dir = Some(parent.to_path_buf()); }
-                            self.selected_path = Some(path);
-                            self.is_folder = false;
-                            self.status_msg.clear();
-                            self.time_active = 0.0;
-                        }
-                    }
-                    ui.add_space(16.0);
-                    if ui.add(egui::Button::new("[ SELECT FOLDER ]")).clicked() {
-                        let mut dialog = FileDialog::new();
-                        if let Some(dir) = &self.last_dir { dialog = dialog.set_directory(dir); }
-                        if let Some(path) = dialog.pick_folder() {
-                            self.last_dir = Some(path.clone());
-                            self.selected_path = Some(path);
-                            self.is_folder = true;
-                            self.status_msg.clear();
-                            self.time_active = 0.0;
-                        }
-                    }
-                });
+                 
+                 let enabled = !self.is_converting;
+                 let fill = if enabled { COLOR_BG } else { COLOR_FADED };
+                 
+                 let mut btn_file = egui::Button::new(egui::RichText::new("[ SELECT FILE ]").color(COLOR_TEXT)).fill(fill);
+                 if !enabled { btn_file = btn_file.sense(egui::Sense::hover()); }
+                 
+                 if ui.add(btn_file).clicked() && enabled {
+                     let mut dialog = FileDialog::new().add_filter("PDF", &["pdf"]);
+                     if let Some(dir) = &self.last_dir { dialog = dialog.set_directory(dir); }
+                     if let Some(path) = dialog.pick_file() {
+                         if let Some(parent) = path.parent() { self.last_dir = Some(parent.to_path_buf()); }
+                         self.selected_path = Some(path);
+                         self.is_folder = false;
+                         self.status_msg.clear();
+                         self.time_active = 0.0;
+                     }
+                 }
+                 
+                 ui.add_space(16.0);
+                 
+                 let mut btn_folder = egui::Button::new(egui::RichText::new("[ SELECT FOLDER ]").color(COLOR_TEXT)).fill(fill);
+                 if !enabled { btn_folder = btn_folder.sense(egui::Sense::hover()); }
+                 
+                 if ui.add(btn_folder).clicked() && enabled {
+                     let mut dialog = FileDialog::new();
+                     if let Some(dir) = &self.last_dir { dialog = dialog.set_directory(dir); }
+                     if let Some(path) = dialog.pick_folder() {
+                         self.last_dir = Some(path.clone());
+                         self.selected_path = Some(path);
+                         self.is_folder = true;
+                         self.status_msg.clear();
+                         self.time_active = 0.0;
+                     }
+                 }
             });
 
             ui.add_space(20.0);
@@ -619,14 +638,23 @@ impl eframe::App for CubeConvertApp {
                         .stroke(egui::Stroke::new(2.0, COLOR_TEXT))
                         .inner_margin(egui::Margin::symmetric(16.0, 12.0))
                         .show(ui, |ui| {
-                            ui.add_enabled_ui(!self.is_converting, |ui| {
-                                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                    // Use smaller font size to match buttons
-                                    retro_label_sized(ui, "> CLOUD DIRECTORY MODE:", COLOR_TEXT, 12.0);
-                                    ui.add_space(16.0);
-                                    ui.radio_value(&mut self.clouds_folder_mode, CloudsFolderMode::StitchImages, "[ STITCH ]");
-                                    ui.add_space(16.0);
-                                    ui.radio_value(&mut self.clouds_folder_mode, CloudsFolderMode::BatchPdf, "[ BATCH ]");
+                            let enabled = !self.is_converting;
+                            ui.add_enabled_ui(enabled, |ui| {
+                                ui.vertical(|ui| {
+                                    ui.horizontal(|ui| {
+                                        retro_label_sized(ui, "> CLOUD DIRECTORY MODE:", COLOR_TEXT, 12.0);
+                                        ui.add_space(16.0);
+                                        ui.radio_value(&mut self.clouds_folder_mode, CloudsFolderMode::BatchPdf, "[ BATCH ]");
+                                        ui.add_space(16.0);
+                                        ui.radio_value(&mut self.clouds_folder_mode, CloudsFolderMode::StitchImages, "[ STITCH ]");
+                                    });
+                                    ui.add_space(6.0);
+                                    let desc = if self.clouds_folder_mode == CloudsFolderMode::BatchPdf {
+                                        "Process each PDF into its own separate video."
+                                    } else {
+                                        "Stitch images into one continuous scrolling video."
+                                    };
+                                    retro_label_sized(ui, desc, COLOR_TEXT, 10.0);
                                 });
                             });
                         });
@@ -640,7 +668,8 @@ impl eframe::App for CubeConvertApp {
                         .stroke(egui::Stroke::new(2.0, COLOR_TEXT))
                         .inner_margin(egui::Margin::symmetric(16.0, 12.0))
                         .show(ui, |ui| {
-                        ui.add_enabled_ui(!self.is_converting, |ui| {
+                        let enabled = !self.is_converting;
+                        ui.add_enabled_ui(enabled, |ui| {
                             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                 ui.scope(|ui| {
                                     ui.spacing_mut().interact_size = egui::vec2(40.0, 24.0);
@@ -662,6 +691,7 @@ impl eframe::App for CubeConvertApp {
                                     
                                     let (rect, response) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::click());
                                     if ui.is_rect_visible(rect) {
+                                        // Removed white hover stroke, it is always COLOR_TEXT
                                         ui.painter().rect(rect, 0.0, color32, egui::Stroke::new(2.0, COLOR_TEXT));
                                     }
                                     
