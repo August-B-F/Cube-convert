@@ -41,9 +41,9 @@ const COLOR_FADED: egui::Color32 = egui::Color32::from_rgb(117, 122, 97);
 const COLOR_WHITE: egui::Color32 = egui::Color32::from_rgb(255, 255, 255);
 const COLOR_BLACK: egui::Color32 = egui::Color32::from_rgb(0, 0, 0);
 
-// Helper function for pixel-perfect vertical alignment of pixel-font text.
-// The font has intrinsic padding at the bottom, so drawing it at +5.0 Y
-// offsets it visually without altering egui's row layout boundaries.
+// Draws text inline with other widgets, nudging it down slightly to
+// compensate for the pixel font's built-in top-heavy metrics.
+// 2px is enough to visually center it against buttons/color pickers.
 fn retro_label(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
     let galley = ui.painter().layout_no_wrap(
         text.to_string(),
@@ -51,7 +51,7 @@ fn retro_label(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
         color,
     );
     let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
-    ui.painter().galley(rect.min + egui::vec2(0.0, 5.0), galley, color);
+    ui.painter().galley(rect.min + egui::vec2(0.0, 2.0), galley, color);
 }
 
 struct CubeConvertApp {
@@ -176,7 +176,6 @@ impl CubeConvertApp {
         visuals.selection.bg_fill = COLOR_TEXT;
         visuals.selection.stroke = egui::Stroke::new(1.0, COLOR_TEXT);
 
-        // Fix for white backgrounds: explicitly set widget backgrounds to COLOR_BG
         visuals.widgets.noninteractive.bg_fill = COLOR_BG;
         visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(2.0, COLOR_TEXT);
         visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(2.0, COLOR_TEXT);
@@ -196,7 +195,6 @@ impl CubeConvertApp {
         visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, COLOR_BG);
         visuals.widgets.active.rounding = egui::Rounding::same(0.0);
         
-        // Button-specific fixes for uniform styling
         visuals.widgets.open.bg_fill = COLOR_BG;
         visuals.widgets.open.bg_stroke = egui::Stroke::new(2.0, COLOR_TEXT);
         visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0, COLOR_TEXT);
@@ -250,9 +248,10 @@ impl CubeConvertApp {
 
             ui.painter().rect_filled(rect, 0.0, bg_color);
             ui.painter().rect_stroke(rect, 0.0, egui::Stroke::new(2.0, COLOR_TEXT));
-            
+
+            // CENTER_CENTER already places text at the geometric center — no Y offset needed.
             ui.painter().text(
-                rect.center() + egui::vec2(0.0, 5.0),
+                rect.center(),
                 egui::Align2::CENTER_CENTER,
                 label,
                 egui::FontId::proportional(16.0),
@@ -421,8 +420,9 @@ impl eframe::App for CubeConvertApp {
                             
                             ui.painter().rect_filled(text_bg_rect, 0.0, COLOR_BG);
                             ui.painter().rect_stroke(text_bg_rect, 0.0, egui::Stroke::new(2.0, COLOR_TEXT));
+                            // CENTER_CENTER — no Y nudge needed here either
                             ui.painter().text(
-                                text_pos + egui::vec2(0.0, 5.0),
+                                text_pos,
                                 egui::Align2::CENTER_CENTER,
                                 prog_text,
                                 egui::FontId::proportional(16.0),
@@ -444,7 +444,7 @@ impl eframe::App for CubeConvertApp {
                             let desired_size = egui::vec2(150.0, 16.0);
                             let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
                             ui.painter().text(
-                                rect.center() + egui::vec2(0.0, 5.0),
+                                rect.center(),
                                 egui::Align2::CENTER_CENTER,
                                 "+++ SUCCESS +++",
                                 egui::FontId::proportional(16.0),
@@ -624,7 +624,6 @@ impl eframe::App for CubeConvertApp {
                             ui.add_enabled_ui(!self.is_converting, |ui| {
                                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                     retro_label(ui, "> CLOUD DIRECTORY MODE:", COLOR_TEXT);
-
                                     ui.add_space(16.0);
                                     ui.radio_value(&mut self.clouds_folder_mode, CloudsFolderMode::StitchImages, "[ STITCH ]");
                                     ui.add_space(16.0);
@@ -702,18 +701,15 @@ impl eframe::App for CubeConvertApp {
             
             painter.line_segment([center + egui::vec2(-box_size, -box_size), center + egui::vec2(-box_size + l, -box_size)], stroke);
             painter.line_segment([center + egui::vec2(-box_size, -box_size), center + egui::vec2(-box_size, -box_size + l)], stroke);
-            
             painter.line_segment([center + egui::vec2(box_size, -box_size), center + egui::vec2(box_size - l, -box_size)], stroke);
             painter.line_segment([center + egui::vec2(box_size, -box_size), center + egui::vec2(box_size, -box_size + l)], stroke);
-            
             painter.line_segment([center + egui::vec2(-box_size, box_size), center + egui::vec2(-box_size + l, box_size)], stroke);
             painter.line_segment([center + egui::vec2(-box_size, box_size), center + egui::vec2(-box_size, box_size - l)], stroke);
-            
             painter.line_segment([center + egui::vec2(box_size, box_size), center + egui::vec2(box_size - l, box_size)], stroke);
             painter.line_segment([center + egui::vec2(box_size, box_size), center + egui::vec2(box_size, box_size - l)], stroke);
 
             painter.text(
-                center + egui::vec2(0.0, 5.0),
+                center,
                 egui::Align2::CENTER_CENTER,
                 "[ DROP DATA HERE ]",
                 egui::FontId::proportional(24.0),
