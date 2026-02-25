@@ -244,7 +244,7 @@ impl CubeConvertApp {
                 COLOR_FADED
             } else {
                 COLOR_BG
-            };
+            }
 
             let text_color = if is_selected {
                 COLOR_BG
@@ -434,13 +434,6 @@ impl eframe::App for CubeConvertApp {
                                 COLOR_TEXT,
                             );
                         });
-
-                        if !self.current_file.is_empty() && self.progress_total > 1 {
-                            ui.add_space(8.0);
-                            let frames = ["|", "/", "-", "\\\\"];
-                            let frame_idx = ((self.time_active * 10.0) as usize) % frames.len();
-                            retro_label(ui, &format!("{} {}", frames[frame_idx], self.current_file), COLOR_TEXT);
-                        }
                     } else {
                         let blink = (self.time_active * 4.0).sin() > 0.0;
                         let cursor = if blink { "_" } else { " " };
@@ -651,7 +644,16 @@ impl eframe::App for CubeConvertApp {
                             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                 ui.scope(|ui| {
                                     ui.spacing_mut().interact_size = egui::vec2(40.0, 24.0);
-                                    ui.color_edit_button_srgb(&mut self.rgb_color);
+                                    let response = ui.color_edit_button_srgb(&mut self.rgb_color);
+                                    
+                                    // Draw our own clean border over egui's default button
+                                    let color32 = egui::Color32::from_rgb(self.rgb_color[0], self.rgb_color[1], self.rgb_color[2]);
+                                    let stroke_color = if response.hovered() {
+                                        COLOR_WHITE
+                                    } else {
+                                        COLOR_TEXT
+                                    };
+                                    ui.painter().rect(response.rect, 0.0, color32, egui::Stroke::new(2.0, stroke_color));
                                 });
                                 
                                 ui.add_space(24.0);
