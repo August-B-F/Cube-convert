@@ -244,7 +244,7 @@ impl CubeConvertApp {
                 COLOR_FADED
             } else {
                 COLOR_BG
-            }
+            };
 
             let text_color = if is_selected {
                 COLOR_BG
