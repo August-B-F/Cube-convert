@@ -162,3 +162,4 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 rust-version/test_win/ffmpeg.exe
+rust-version/test_win/
