@@ -959,20 +959,23 @@ fn load_icon() -> Option<egui::IconData> {
 }
 
 fn main() -> eframe::Result<()> {
-    // Enable transparency so we can draw border-radius properly outside the window
+    let icon_data = load_icon();
+    
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([700.0, 520.0])
         .with_decorations(false) 
-        .with_transparent(true); // <-- REQUIRED for rounded corners
+        .with_transparent(true);
     
-    if let Some(icon) = load_icon() {
-        viewport = viewport.with_icon(std::sync::Arc::new(icon));
+    // Set icon without Arc wrapper - eframe handles the Arc internally
+    if let Some(icon) = icon_data {
+        viewport = viewport.with_icon(Arc::new(icon));
     }
 
     let options = eframe::NativeOptions {
         viewport,
         ..Default::default()
     };
+    
     eframe::run_native(
         "Cube-Convert",
         options,
