@@ -52,8 +52,7 @@ fn retro_label_sized(ui: &mut egui::Ui, text: &str, color: egui::Color32, font_s
     );
     let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
     
-    // Nudge down to compensate for pixel font's internal top-heavy metrics
-    ui.painter().galley(rect.min + egui::vec2(0.0, 3.0), galley, color);
+    ui.painter().galley(rect.min, galley, color);
 }
 
 // Convenience wrapper for standard 16.0 font size labels
