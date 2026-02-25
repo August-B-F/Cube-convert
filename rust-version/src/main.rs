@@ -52,8 +52,8 @@ fn retro_label_sized(ui: &mut egui::Ui, text: &str, color: egui::Color32, font_s
     );
     let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
     
-    // Using rect.min directly perfectly aligns the galley natively
-    ui.painter().galley(rect.min, galley, color);
+    // Nudge down to compensate for pixel font's internal top-heavy metrics
+    ui.painter().galley(rect.min + egui::vec2(0.0, 3.0), galley, color);
 }
 
 // Convenience wrapper for standard 16.0 font size labels
@@ -630,7 +630,7 @@ impl eframe::App for CubeConvertApp {
                             ui.add_enabled_ui(!self.is_converting, |ui| {
                                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                                     // Use smaller font size to match buttons
-                                    retro_label_sized(ui, "> CLOUD DIRECTORY MODE:", COLOR_TEXT, 14.0);
+                                    retro_label_sized(ui, "> CLOUD DIRECTORY MODE:", COLOR_TEXT, 12.0);
                                     ui.add_space(16.0);
                                     ui.radio_value(&mut self.clouds_folder_mode, CloudsFolderMode::StitchImages, "[ STITCH ]");
                                     ui.add_space(16.0);
@@ -650,10 +650,6 @@ impl eframe::App for CubeConvertApp {
                         .show(ui, |ui| {
                         ui.add_enabled_ui(!self.is_converting, |ui| {
                             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                // Use smaller font size to match neighboring color rects
-                                retro_label_sized(ui, "> COLOR:", COLOR_TEXT, 14.0);
-
-                                ui.add_space(8.0);
                                 ui.scope(|ui| {
                                     ui.spacing_mut().interact_size = egui::vec2(40.0, 24.0);
                                     ui.color_edit_button_srgb(&mut self.rgb_color);
@@ -661,8 +657,7 @@ impl eframe::App for CubeConvertApp {
                                 
                                 ui.add_space(24.0);
                                 
-                                // Use smaller font size here too
-                                retro_label_sized(ui, "PALETTE:", COLOR_TEXT, 14.0);
+                                retro_label_sized(ui, "PALETTE:", COLOR_TEXT, 12.0);
 
                                 ui.add_space(8.0);
                                 for color in self.color_history.clone() {
