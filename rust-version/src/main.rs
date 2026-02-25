@@ -437,14 +437,26 @@ impl eframe::App for CubeConvertApp {
                             ui.add_space(8.0);
                             let frames = ["|", "/", "-", "\\\\"];
                             let frame_idx = ((self.time_active * 10.0) as usize) % frames.len();
-                            ui.label(egui::RichText::new(format!("{} {}", frames[frame_idx], self.current_file)).color(COLOR_TEXT));
+                            // Fix vertical centering of the status labels during conversion:
+                            let galley = ui.painter().layout_no_wrap(
+                                format!("{} {}", frames[frame_idx], self.current_file),
+                                egui::FontId::proportional(16.0),
+                                COLOR_TEXT,
+                            );
+                            let desired_size = galley.size();
+                            let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
+                            ui.painter().galley(rect.min, galley, COLOR_TEXT);
                         }
                     } else {
                         let blink = (self.time_active * 4.0).sin() > 0.0;
                         let cursor = if blink { "_" } else { " " };
                         
                         if self.status_msg == "Done." {
-                            ui.label(egui::RichText::new("+++ SUCCESS +++").color(COLOR_ACCENT).strong().size(16.0));
+                            // Fix vertical centering of success messages:
+                            let desired_size = egui::vec2(150.0, 16.0);
+                            let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
+                            ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "+++ SUCCESS +++", egui::FontId::proportional(16.0), COLOR_ACCENT);
+
                             ui.add_space(16.0);
                             if ui.add(egui::Button::new("[ OPEN DIR ]").fill(COLOR_BG)).clicked() {
                                 if let Some(path) = &self.selected_path {
@@ -461,20 +473,38 @@ impl eframe::App for CubeConvertApp {
                                     let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
                                 }
                             }
-                        } else if self.status_msg == "Cancelled." || self.status_msg == "ABORTING..." {
-                            ui.label(egui::RichText::new(format!("> {}{}", self.status_msg, cursor)).color(COLOR_RED).strong().size(16.0));
-                        } else if self.status_msg.starts_with("Error") || self.status_msg.starts_with("An error") {
-                            ui.label(egui::RichText::new(format!("> {}{}", self.status_msg, cursor)).color(COLOR_RED).strong().size(16.0));
-                        } else if !self.status_msg.is_empty() {
-                            ui.label(egui::RichText::new(format!("> {}{}", self.status_msg, cursor)).color(COLOR_TEXT).strong().size(16.0));
                         } else {
-                            // Provide continuous prompt instructions instead of empty space
-                            let prompt = if self.selected_path.is_some() {
-                                "> READY. CLICK EXECUTE TO START."
+                            let text = if self.status_msg == "Cancelled." || self.status_msg == "ABORTING..." {
+                                format!("> {}{}", self.status_msg, cursor)
+                            } else if self.status_msg.starts_with("Error") || self.status_msg.starts_with("An error") {
+                                format!("> {}{}", self.status_msg, cursor)
+                            } else if !self.status_msg.is_empty() {
+                                format!("> {}{}", self.status_msg, cursor)
                             } else {
-                                "> AWAITING DATA DROP OR SELECTION..."
+                                let prompt = if self.selected_path.is_some() {
+                                    "> READY. CLICK EXECUTE TO START."
+                                } else {
+                                    "> AWAITING DATA DROP OR SELECTION..."
+                                };
+                                format!("{}{}", prompt, cursor)
                             };
-                            ui.label(egui::RichText::new(format!("{}{}", prompt, cursor)).color(COLOR_TEXT).strong().size(16.0));
+
+                            let color = if self.status_msg == "Cancelled." || self.status_msg == "ABORTING..." || self.status_msg.starts_with("Error") || self.status_msg.starts_with("An error") {
+                                COLOR_RED
+                            } else {
+                                COLOR_TEXT
+                            };
+
+                            // Fix vertical centering of the status labels:
+                            let galley = ui.painter().layout_no_wrap(
+                                text,
+                                egui::FontId::proportional(16.0),
+                                color,
+                            );
+                            let desired_size = galley.size();
+                            // Force allocation of the exact vertical space of the galley, which keeps it visually centered
+                            let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
+                            ui.painter().galley(rect.min, galley, color);
                         }
                     }
                 });
@@ -618,7 +648,15 @@ impl eframe::App for CubeConvertApp {
                         .show(ui, |ui| {
                             ui.add_enabled_ui(!self.is_converting, |ui| {
                                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                    ui.label(egui::RichText::new("> CLOUD DIRECTORY MODE:").color(COLOR_TEXT));
+                                    // Fix vertical centering of the CLOUD DIRECTORY MODE label
+                                    let galley = ui.painter().layout_no_wrap(
+                                        "> CLOUD DIRECTORY MODE:".to_string(),
+                                        egui::FontId::proportional(16.0),
+                                        COLOR_TEXT,
+                                    );
+                                    let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
+                                    ui.painter().galley(rect.min, galley, COLOR_TEXT);
+
                                     ui.add_space(16.0);
                                     ui.radio_value(&mut self.clouds_folder_mode, CloudsFolderMode::StitchImages, "[ STITCH ]");
                                     ui.add_space(16.0);
@@ -638,7 +676,15 @@ impl eframe::App for CubeConvertApp {
                         .show(ui, |ui| {
                         ui.add_enabled_ui(!self.is_converting, |ui| {
                             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                ui.label(egui::RichText::new("> COLOR:").color(COLOR_TEXT));
+                                // Fix vertical centering of the COLOR label
+                                let color_galley = ui.painter().layout_no_wrap(
+                                    "> COLOR:".to_string(),
+                                    egui::FontId::proportional(16.0),
+                                    COLOR_TEXT,
+                                );
+                                let (color_rect, _) = ui.allocate_exact_size(color_galley.size(), egui::Sense::hover());
+                                ui.painter().galley(color_rect.min, color_galley, COLOR_TEXT);
+
                                 ui.add_space(8.0);
                                 ui.scope(|ui| {
                                     ui.spacing_mut().interact_size = egui::vec2(40.0, 24.0);
@@ -647,7 +693,15 @@ impl eframe::App for CubeConvertApp {
                                 
                                 ui.add_space(24.0);
                                 
-                                ui.label(egui::RichText::new("PALETTE:").color(COLOR_TEXT));
+                                // Fix vertical centering of the PALETTE label
+                                let palette_galley = ui.painter().layout_no_wrap(
+                                    "PALETTE:".to_string(),
+                                    egui::FontId::proportional(16.0),
+                                    COLOR_TEXT,
+                                );
+                                let (palette_rect, _) = ui.allocate_exact_size(palette_galley.size(), egui::Sense::hover());
+                                ui.painter().galley(palette_rect.min, palette_galley, COLOR_TEXT);
+
                                 ui.add_space(8.0);
                                 for color in self.color_history.clone() {
                                     let (r, g, b) = (color[0], color[1], color[2]);
