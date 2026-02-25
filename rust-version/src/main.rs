@@ -170,7 +170,7 @@ impl CubeConvertApp {
         }
         ctx.set_fonts(fonts);
 
-        let mut visuals = egui::Visuals::light();
+        let mut visuals = egui::Visuals::dark();
         
         visuals.window_fill = COLOR_BG;
         visuals.panel_fill = COLOR_BG;
@@ -179,10 +179,10 @@ impl CubeConvertApp {
         
         visuals.override_text_color = Some(COLOR_TEXT);
         
-        visuals.selection.bg_fill = COLOR_TEXT;
+        visuals.selection.bg_fill = COLOR_BG;
         visuals.selection.stroke = egui::Stroke::new(1.0, COLOR_TEXT);
 
-        visuals.widgets.noninteractive.bg_fill = COLOR_BG;
+        visuals.widgets.noninteractive.bg_fill = COLOR_FADED;
         visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(2.0, COLOR_TEXT);
         visuals.widgets.noninteractive.fg_stroke = egui::Stroke::new(2.0, COLOR_TEXT);
         
@@ -288,7 +288,7 @@ impl eframe::App for CubeConvertApp {
                     ui.add_space(20.0);
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.add(egui::Button::new("[ OK ]").fill(COLOR_BG)).clicked() {
+                            if ui.add(egui::Button::new("[ OK ]")).clicked() {
                                 self.show_error_popup = false;
                             }
                         });
@@ -450,7 +450,7 @@ impl eframe::App for CubeConvertApp {
                             );
 
                             ui.add_space(16.0);
-                            if ui.add(egui::Button::new("[ OPEN DIR ]").fill(COLOR_BG)).clicked() {
+                            if ui.add(egui::Button::new("[ OPEN DIR ]")).clicked() {
                                 if let Some(path) = &self.selected_path {
                                     let dir = if self.is_folder {
                                         path.clone()
@@ -495,12 +495,12 @@ impl eframe::App for CubeConvertApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if !self.is_converting {
                         let btn_text = egui::RichText::new("EXECUTE").size(18.0).strong().color(COLOR_TEXT);
-                        if ui.add_enabled(self.selected_path.is_some(), egui::Button::new(btn_text).fill(COLOR_BG).min_size(egui::vec2(120.0, 40.0))).clicked() {
+                        if ui.add_enabled(self.selected_path.is_some(), egui::Button::new(btn_text).min_size(egui::vec2(120.0, 40.0))).clicked() {
                             self.start_conversion(ctx.clone());
                         }
                     } else {
                         let btn_text = egui::RichText::new("ABORT").size(18.0).strong().color(COLOR_TEXT);
-                        if ui.add(egui::Button::new(btn_text).fill(COLOR_BG).min_size(egui::vec2(120.0, 40.0))).clicked() {
+                        if ui.add(egui::Button::new(btn_text).min_size(egui::vec2(120.0, 40.0))).clicked() {
                             self.cancel_flag.store(true, Ordering::Relaxed);
                             self.status_msg = "ABORTING...".to_string();
                         }
@@ -561,7 +561,7 @@ impl eframe::App for CubeConvertApp {
             ui.horizontal(|ui| {
                  ui.add_space(24.0);
                  ui.add_enabled_ui(!self.is_converting, |ui| {
-                    if ui.add(egui::Button::new("[ SELECT FILE ]").fill(COLOR_BG)).clicked() {
+                    if ui.add(egui::Button::new("[ SELECT FILE ]")).clicked() {
                         let mut dialog = FileDialog::new().add_filter("PDF", &["pdf"]);
                         if let Some(dir) = &self.last_dir { dialog = dialog.set_directory(dir); }
                         if let Some(path) = dialog.pick_file() {
@@ -573,7 +573,7 @@ impl eframe::App for CubeConvertApp {
                         }
                     }
                     ui.add_space(16.0);
-                    if ui.add(egui::Button::new("[ SELECT FOLDER ]").fill(COLOR_BG)).clicked() {
+                    if ui.add(egui::Button::new("[ SELECT FOLDER ]")).clicked() {
                         let mut dialog = FileDialog::new();
                         if let Some(dir) = &self.last_dir { dialog = dialog.set_directory(dir); }
                         if let Some(path) = dialog.pick_folder() {
@@ -648,12 +648,7 @@ impl eframe::App for CubeConvertApp {
                                     
                                     // Draw our own clean border over egui's default button
                                     let color32 = egui::Color32::from_rgb(self.rgb_color[0], self.rgb_color[1], self.rgb_color[2]);
-                                    let stroke_color = if response.hovered() {
-                                        COLOR_WHITE
-                                    } else {
-                                        COLOR_TEXT
-                                    };
-                                    ui.painter().rect(response.rect, 0.0, color32, egui::Stroke::new(2.0, stroke_color));
+                                    ui.painter().rect(response.rect, 0.0, color32, egui::Stroke::new(2.0, COLOR_TEXT));
                                 });
                                 
                                 ui.add_space(24.0);
@@ -667,12 +662,7 @@ impl eframe::App for CubeConvertApp {
                                     
                                     let (rect, response) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::click());
                                     if ui.is_rect_visible(rect) {
-                                        let stroke_color = if response.hovered() {
-                                            COLOR_WHITE
-                                        } else {
-                                            COLOR_TEXT
-                                        };
-                                        ui.painter().rect(rect, 0.0, color32, egui::Stroke::new(2.0, stroke_color));
+                                        ui.painter().rect(rect, 0.0, color32, egui::Stroke::new(2.0, COLOR_TEXT));
                                     }
                                     
                                     if response.clicked() {
