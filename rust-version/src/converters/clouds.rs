@@ -39,6 +39,9 @@ pub fn convert_clouds(
         }
 
         let mut images = Vec::new();
+        // Add black image at the start
+        images.push(image::RgbImage::new(750, 360));
+        
         for p in &page_files {
             if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 return Err("Cancelled.".into());
@@ -47,6 +50,9 @@ pub fn convert_clouds(
             let resized = imageops::resize(&img, 750, 360, imageops::FilterType::Triangle);
             images.push(resized);
         }
+
+        // Add black image at the end
+        images.push(image::RgbImage::new(750, 360));
 
         let video_dur = 12.0 * 60.0;
         let fps = 25.0;
@@ -146,6 +152,9 @@ pub fn convert_clouds(
             }
 
             let mut images = Vec::new();
+            // Add black image at the start
+            images.push(image::RgbImage::new(750, 360));
+
             for p in &page_files {
                 if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                     let _ = fs::remove_dir_all(&tmp_dir);
@@ -155,6 +164,9 @@ pub fn convert_clouds(
                 let resized = imageops::resize(&img, 750, 360, imageops::FilterType::Triangle);
                 images.push(resized);
             }
+
+            // Add black image at the end
+            images.push(image::RgbImage::new(750, 360));
 
             let video_dur = 12.0 * 60.0;
             let fps = 25.0;
