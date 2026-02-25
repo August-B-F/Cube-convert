@@ -41,6 +41,10 @@ const COLOR_FADED: egui::Color32 = egui::Color32::from_rgb(117, 122, 97);
 const COLOR_WHITE: egui::Color32 = egui::Color32::from_rgb(255, 255, 255);
 const COLOR_BLACK: egui::Color32 = egui::Color32::from_rgb(0, 0, 0);
 
+// Small baseline nudge for pixel font: egui's default label alignment sits slightly high.
+const TEXT_Y_SHIFT: f32 = 2.0;
+const TEXT_Y_PAD: f32 = 4.0;
+
 struct CubeConvertApp {
     selected_tab: ConversionType,
     selected_path: Option<PathBuf>,
@@ -223,28 +227,28 @@ impl CubeConvertApp {
         }
 
         if ui.is_rect_visible(rect) {
-            let _visuals = ui.style().interact(&response);
-            
+            // Requested scheme:
+            // - Selected: black bg + bg-colored text
+            // - Not selected: bg-colored bg + black text
             let bg_color = if is_selected {
-                COLOR_BG
+                COLOR_TEXT
             } else if response.hovered() {
                 COLOR_FADED
-            } else {
-                COLOR_TEXT
-            };
-            
-            let text_color = if is_selected {
-                COLOR_TEXT
             } else {
                 COLOR_BG
             };
 
-            // Draw background 
+            let text_color = if is_selected {
+                COLOR_BG
+            } else {
+                COLOR_TEXT
+            };
+
             ui.painter().rect_filled(rect, 0.0, bg_color);
             ui.painter().rect_stroke(rect, 0.0, egui::Stroke::new(2.0, COLOR_TEXT));
             
             ui.painter().text(
-                rect.center(),
+                rect.center() + egui::vec2(0.0, TEXT_Y_SHIFT),
                 egui::Align2::CENTER_CENTER,
                 label,
                 egui::FontId::proportional(16.0),
@@ -359,8 +363,7 @@ impl eframe::App for CubeConvertApp {
             }
         }
 
-        // TopPanel for execute button to prevent it from being stuck at the bottom edge and full width
-        // We move the execution button and progress info here to have predictable spacing.
+        // Bottom execution panel
         egui::TopBottomPanel::bottom("execution_panel")
             .frame(egui::Frame::none().inner_margin(egui::Margin::symmetric(24.0, 16.0)).fill(COLOR_BG))
             .show(ctx, |ui| {
@@ -372,9 +375,7 @@ impl eframe::App for CubeConvertApp {
                 egui::Stroke::new(2.0, COLOR_TEXT),
             );
 
-            // Bottom execution area
             ui.horizontal(|ui| {
-                // Status & Progress line left aligned
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     if self.is_converting {
                         let fraction_sum: f32 = self.file_fractions.values().sum();
@@ -386,13 +387,11 @@ impl eframe::App for CubeConvertApp {
                         let progress = progress.clamp(0.0, 1.0);
 
                         ui.horizontal(|ui| {
-                            // Retro blocky progress bar with integrated text
                             let desired_size = egui::vec2(400.0, 32.0);
                             let (rect, _response) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
                             
                             ui.painter().rect_stroke(rect, 0.0, egui::Stroke::new(2.0, COLOR_TEXT));
                             
-                            // Draw segmented blocks
                             let num_blocks = 25.0;
                             let block_width = (rect.width() - 4.0) / num_blocks;
                             let blocks_to_fill = (progress * num_blocks) as i32;
@@ -413,7 +412,6 @@ impl eframe::App for CubeConvertApp {
                                 format!("{:02}%", percentage)
                             };
 
-                            // Draw text in middle of progress bar with contrasting background badge
                             let text_pos = rect.center();
                             let galley = ui.painter().layout_no_wrap(
                                 prog_text.clone(),
@@ -425,7 +423,7 @@ impl eframe::App for CubeConvertApp {
                             ui.painter().rect_filled(text_bg_rect, 0.0, COLOR_BG);
                             ui.painter().rect_stroke(text_bg_rect, 0.0, egui::Stroke::new(2.0, COLOR_TEXT));
                             ui.painter().text(
-                                text_pos,
+                                text_pos + egui::vec2(0.0, TEXT_Y_SHIFT),
                                 egui::Align2::CENTER_CENTER,
                                 prog_text,
                                 egui::FontId::proportional(16.0),
@@ -437,25 +435,30 @@ impl eframe::App for CubeConvertApp {
                             ui.add_space(8.0);
                             let frames = ["|", "/", "-", "\\\\"];
                             let frame_idx = ((self.time_active * 10.0) as usize) % frames.len();
-                            // Fix vertical centering of the status labels during conversion:
+
                             let galley = ui.painter().layout_no_wrap(
                                 format!("{} {}", frames[frame_idx], self.current_file),
                                 egui::FontId::proportional(16.0),
                                 COLOR_TEXT,
                             );
-                            let desired_size = galley.size();
+                            let desired_size = galley.size() + egui::vec2(0.0, TEXT_Y_PAD);
                             let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
-                            ui.painter().galley(rect.min, galley, COLOR_TEXT);
+                            ui.painter().galley(rect.min + egui::vec2(0.0, TEXT_Y_SHIFT), galley, COLOR_TEXT);
                         }
                     } else {
                         let blink = (self.time_active * 4.0).sin() > 0.0;
                         let cursor = if blink { "_" } else { " " };
                         
                         if self.status_msg == "Done." {
-                            // Fix vertical centering of success messages:
-                            let desired_size = egui::vec2(150.0, 16.0);
+                            let desired_size = egui::vec2(150.0, 16.0 + TEXT_Y_PAD);
                             let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
-                            ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "+++ SUCCESS +++", egui::FontId::proportional(16.0), COLOR_ACCENT);
+                            ui.painter().text(
+                                rect.center() + egui::vec2(0.0, TEXT_Y_SHIFT),
+                                egui::Align2::CENTER_CENTER,
+                                "+++ SUCCESS +++",
+                                egui::FontId::proportional(16.0),
+                                COLOR_ACCENT,
+                            );
 
                             ui.add_space(16.0);
                             if ui.add(egui::Button::new("[ OPEN DIR ]").fill(COLOR_BG)).clicked() {
@@ -495,24 +498,20 @@ impl eframe::App for CubeConvertApp {
                                 COLOR_TEXT
                             };
 
-                            // Fix vertical centering of the status labels:
                             let galley = ui.painter().layout_no_wrap(
                                 text,
                                 egui::FontId::proportional(16.0),
                                 color,
                             );
-                            let desired_size = galley.size();
-                            // Force allocation of the exact vertical space of the galley, which keeps it visually centered
+                            let desired_size = galley.size() + egui::vec2(0.0, TEXT_Y_PAD);
                             let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
-                            ui.painter().galley(rect.min, galley, color);
+                            ui.painter().galley(rect.min + egui::vec2(0.0, TEXT_Y_SHIFT), galley, color);
                         }
                     }
                 });
 
-                // Execute/Abort button right aligned
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if !self.is_converting {
-                        // Standard button, not filling width
                         let btn_text = egui::RichText::new("EXECUTE").size(18.0).strong().color(COLOR_TEXT);
                         if ui.add_enabled(self.selected_path.is_some(), egui::Button::new(btn_text).fill(COLOR_BG).min_size(egui::vec2(120.0, 40.0))).clicked() {
                             self.start_conversion(ctx.clone());
@@ -528,15 +527,13 @@ impl eframe::App for CubeConvertApp {
             });
         });
 
-        // Main Window Content
         egui::CentralPanel::default().frame(egui::Frame::none().fill(COLOR_BG)).show(ctx, |ui| {
             ui.add_space(20.0);
 
-            // TABS
             ui.add_enabled_ui(!self.is_converting, |ui| {
                 let mut tab_changed = false;
                 ui.horizontal(|ui| {
-                    ui.add_space(24.0); // Consistent left margin
+                    ui.add_space(24.0);
                     if self.custom_tab(ui, ConversionType::Wind, "WIND", ctx) { self.selected_tab = ConversionType::Wind; tab_changed = true; }
                     if self.custom_tab(ui, ConversionType::Bpm, "BPM", ctx) { self.selected_tab = ConversionType::Bpm; tab_changed = true; }
                     if self.custom_tab(ui, ConversionType::Clouds, "CLOUDS", ctx) { self.selected_tab = ConversionType::Clouds; tab_changed = true; }
@@ -551,7 +548,6 @@ impl eframe::App for CubeConvertApp {
                 }
             });
 
-            // Thick line separating tabs from content
             let rect = ui.max_rect();
             ui.painter().hline(
                 rect.min.x..=rect.max.x,
@@ -569,21 +565,19 @@ impl eframe::App for CubeConvertApp {
                 ConversionType::Slideshow => "Folder of images -> 4s Slideshow MP4",
             };
             
-            // Typing animation for description text
             let char_count = (self.time_active * 30.0) as usize;
             let desc_to_show = if char_count > desc.len() { desc } else { &desc[..char_count] };
             
             ui.horizontal(|ui| {
-               ui.add_space(24.0); // Consistent left margin
+               ui.add_space(24.0);
                ui.label(egui::RichText::new(desc_to_show).size(20.0).strong().color(COLOR_TEXT));
             });
-            ctx.request_repaint(); // Keep repainting for the typing effect
+            ctx.request_repaint();
             
             ui.add_space(16.0);
 
-            // Input Area
             ui.horizontal(|ui| {
-                 ui.add_space(24.0); // Consistent left margin
+                 ui.add_space(24.0);
                  ui.add_enabled_ui(!self.is_converting, |ui| {
                     if ui.add(egui::Button::new("[ SELECT FILE ]").fill(COLOR_BG)).clicked() {
                         let mut dialog = FileDialog::new().add_filter("PDF", &["pdf"]);
@@ -593,7 +587,7 @@ impl eframe::App for CubeConvertApp {
                             self.selected_path = Some(path);
                             self.is_folder = false;
                             self.status_msg.clear();
-                            self.time_active = 0.0; // Reset typing anim on change
+                            self.time_active = 0.0;
                         }
                     }
                     ui.add_space(16.0);
@@ -605,7 +599,7 @@ impl eframe::App for CubeConvertApp {
                             self.selected_path = Some(path);
                             self.is_folder = true;
                             self.status_msg.clear();
-                            self.time_active = 0.0; // Reset typing anim on change
+                            self.time_active = 0.0;
                         }
                     }
                 });
@@ -613,16 +607,14 @@ impl eframe::App for CubeConvertApp {
 
             ui.add_space(20.0);
 
-            // Path display box
             ui.horizontal(|ui| {
-                 ui.add_space(24.0); // Consistent left margin
+                 ui.add_space(24.0);
                  if let Some(path) = &self.selected_path {
                     egui::Frame::none()
                         .fill(COLOR_BG)
                         .stroke(egui::Stroke::new(2.0, COLOR_TEXT))
                         .inner_margin(egui::Margin::symmetric(12.0, 8.0))
                         .show(ui, |ui| {
-                            // Truncate path if it's too long, showing the end
                             let path_str = path.display().to_string();
                             let display_str = if path_str.len() > 60 {
                                 format!("...{}", &path_str[path_str.len() - 57..])
@@ -638,24 +630,23 @@ impl eframe::App for CubeConvertApp {
             
             ui.add_space(32.0);
 
-            // Module specific options enclosed in retro frames
             if self.selected_tab == ConversionType::Clouds && self.is_folder {
                 ui.horizontal(|ui| {
-                     ui.add_space(24.0); // Consistent left margin
+                     ui.add_space(24.0);
                      egui::Frame::none()
                         .stroke(egui::Stroke::new(2.0, COLOR_TEXT))
                         .inner_margin(egui::Margin::symmetric(16.0, 12.0))
                         .show(ui, |ui| {
                             ui.add_enabled_ui(!self.is_converting, |ui| {
                                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                    // Fix vertical centering of the CLOUD DIRECTORY MODE label
                                     let galley = ui.painter().layout_no_wrap(
                                         "> CLOUD DIRECTORY MODE:".to_string(),
                                         egui::FontId::proportional(16.0),
                                         COLOR_TEXT,
                                     );
-                                    let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
-                                    ui.painter().galley(rect.min, galley, COLOR_TEXT);
+                                    let desired_size = galley.size() + egui::vec2(0.0, TEXT_Y_PAD);
+                                    let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
+                                    ui.painter().galley(rect.min + egui::vec2(0.0, TEXT_Y_SHIFT), galley, COLOR_TEXT);
 
                                     ui.add_space(16.0);
                                     ui.radio_value(&mut self.clouds_folder_mode, CloudsFolderMode::StitchImages, "[ STITCH ]");
@@ -669,21 +660,21 @@ impl eframe::App for CubeConvertApp {
 
             if self.selected_tab == ConversionType::Text {
                 ui.horizontal(|ui| {
-                    ui.add_space(24.0); // Consistent left margin
+                    ui.add_space(24.0);
                     egui::Frame::none()
                         .stroke(egui::Stroke::new(2.0, COLOR_TEXT))
                         .inner_margin(egui::Margin::symmetric(16.0, 12.0))
                         .show(ui, |ui| {
                         ui.add_enabled_ui(!self.is_converting, |ui| {
                             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                // Fix vertical centering of the COLOR label
                                 let color_galley = ui.painter().layout_no_wrap(
                                     "> COLOR:".to_string(),
                                     egui::FontId::proportional(16.0),
                                     COLOR_TEXT,
                                 );
-                                let (color_rect, _) = ui.allocate_exact_size(color_galley.size(), egui::Sense::hover());
-                                ui.painter().galley(color_rect.min, color_galley, COLOR_TEXT);
+                                let desired_size = color_galley.size() + egui::vec2(0.0, TEXT_Y_PAD);
+                                let (color_rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
+                                ui.painter().galley(color_rect.min + egui::vec2(0.0, TEXT_Y_SHIFT), color_galley, COLOR_TEXT);
 
                                 ui.add_space(8.0);
                                 ui.scope(|ui| {
@@ -693,14 +684,14 @@ impl eframe::App for CubeConvertApp {
                                 
                                 ui.add_space(24.0);
                                 
-                                // Fix vertical centering of the PALETTE label
                                 let palette_galley = ui.painter().layout_no_wrap(
                                     "PALETTE:".to_string(),
                                     egui::FontId::proportional(16.0),
                                     COLOR_TEXT,
                                 );
-                                let (palette_rect, _) = ui.allocate_exact_size(palette_galley.size(), egui::Sense::hover());
-                                ui.painter().galley(palette_rect.min, palette_galley, COLOR_TEXT);
+                                let desired_size = palette_galley.size() + egui::vec2(0.0, TEXT_Y_PAD);
+                                let (palette_rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
+                                ui.painter().galley(palette_rect.min + egui::vec2(0.0, TEXT_Y_SHIFT), palette_galley, COLOR_TEXT);
 
                                 ui.add_space(8.0);
                                 for color in self.color_history.clone() {
@@ -719,7 +710,6 @@ impl eframe::App for CubeConvertApp {
                                     
                                     if response.clicked() {
                                         self.rgb_color = color;
-                                        // Move to front of history
                                         self.color_history.retain(|&c| c != color);
                                         self.color_history.insert(0, color);
                                         self.save_settings();
@@ -732,42 +722,35 @@ impl eframe::App for CubeConvertApp {
             }
         });
 
-        // Draw animated drag & drop overlay
         if overlay_alpha > 0.0 {
             let rect = ctx.screen_rect();
             let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("drop_overlay")));
             
             painter.rect_filled(rect, 0.0, egui::Color32::from_rgba_premultiplied(150, 158, 123, (220.0 * overlay_alpha) as u8));
             
-            // Pixelated target bracket animation
             let time = ctx.input(|i| i.time);
             let pulse = ((time * 8.0).sin() as f32 * 0.5 + 0.5) * overlay_alpha;
             
             let center = rect.center();
             let box_size = 150.0 + (pulse * 20.0);
             
-            // Draw 4 corner brackets
             let stroke = egui::Stroke::new(6.0, COLOR_TEXT);
             let l = 30.0;
             
-            // Top Left
             painter.line_segment([center + egui::vec2(-box_size, -box_size), center + egui::vec2(-box_size + l, -box_size)], stroke);
             painter.line_segment([center + egui::vec2(-box_size, -box_size), center + egui::vec2(-box_size, -box_size + l)], stroke);
             
-            // Top Right
             painter.line_segment([center + egui::vec2(box_size, -box_size), center + egui::vec2(box_size - l, -box_size)], stroke);
             painter.line_segment([center + egui::vec2(box_size, -box_size), center + egui::vec2(box_size, -box_size + l)], stroke);
             
-            // Bottom Left
             painter.line_segment([center + egui::vec2(-box_size, box_size), center + egui::vec2(-box_size + l, box_size)], stroke);
             painter.line_segment([center + egui::vec2(-box_size, box_size), center + egui::vec2(-box_size, box_size - l)], stroke);
             
-            // Bottom Right
             painter.line_segment([center + egui::vec2(box_size, box_size), center + egui::vec2(box_size - l, box_size)], stroke);
             painter.line_segment([center + egui::vec2(box_size, box_size), center + egui::vec2(box_size, box_size - l)], stroke);
 
             painter.text(
-                center,
+                center + egui::vec2(0.0, TEXT_Y_SHIFT),
                 egui::Align2::CENTER_CENTER,
                 "[ DROP DATA HERE ]",
                 egui::FontId::proportional(24.0),
