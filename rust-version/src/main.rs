@@ -41,17 +41,24 @@ const COLOR_FADED: egui::Color32 = egui::Color32::from_rgb(117, 122, 97);
 const COLOR_WHITE: egui::Color32 = egui::Color32::from_rgb(255, 255, 255);
 const COLOR_BLACK: egui::Color32 = egui::Color32::from_rgb(0, 0, 0);
 
-// Draws text inline with other widgets, nudging it down slightly to
-// compensate for the pixel font's built-in top-heavy metrics.
-// 2px is enough to visually center it against buttons/color pickers.
-fn retro_label(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
+// Draws text inline with other widgets without shifting its container.
+// Allows specifying font size to match surrounding UI.
+// The galley is explicitly centered within the allocated exact size rect.
+fn retro_label_sized(ui: &mut egui::Ui, text: &str, color: egui::Color32, font_size: f32) {
     let galley = ui.painter().layout_no_wrap(
         text.to_string(),
-        egui::FontId::proportional(16.0),
+        egui::FontId::proportional(font_size),
         color,
     );
     let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
-    ui.painter().galley(rect.min + egui::vec2(0.0, 2.0), galley, color);
+    
+    // Using rect.min directly perfectly aligns the galley natively
+    ui.painter().galley(rect.min, galley, color);
+}
+
+// Convenience wrapper for standard 16.0 font size labels
+fn retro_label(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
+    retro_label_sized(ui, text, color, 16.0);
 }
 
 struct CubeConvertApp {
@@ -249,7 +256,6 @@ impl CubeConvertApp {
             ui.painter().rect_filled(rect, 0.0, bg_color);
             ui.painter().rect_stroke(rect, 0.0, egui::Stroke::new(2.0, COLOR_TEXT));
 
-            // CENTER_CENTER already places text at the geometric center — no Y offset needed.
             ui.painter().text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
@@ -420,7 +426,7 @@ impl eframe::App for CubeConvertApp {
                             
                             ui.painter().rect_filled(text_bg_rect, 0.0, COLOR_BG);
                             ui.painter().rect_stroke(text_bg_rect, 0.0, egui::Stroke::new(2.0, COLOR_TEXT));
-                            // CENTER_CENTER — no Y nudge needed here either
+                            
                             ui.painter().text(
                                 text_pos,
                                 egui::Align2::CENTER_CENTER,
@@ -623,7 +629,8 @@ impl eframe::App for CubeConvertApp {
                         .show(ui, |ui| {
                             ui.add_enabled_ui(!self.is_converting, |ui| {
                                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                    retro_label(ui, "> CLOUD DIRECTORY MODE:", COLOR_TEXT);
+                                    // Use smaller font size to match buttons
+                                    retro_label_sized(ui, "> CLOUD DIRECTORY MODE:", COLOR_TEXT, 14.0);
                                     ui.add_space(16.0);
                                     ui.radio_value(&mut self.clouds_folder_mode, CloudsFolderMode::StitchImages, "[ STITCH ]");
                                     ui.add_space(16.0);
@@ -643,7 +650,8 @@ impl eframe::App for CubeConvertApp {
                         .show(ui, |ui| {
                         ui.add_enabled_ui(!self.is_converting, |ui| {
                             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                retro_label(ui, "> COLOR:", COLOR_TEXT);
+                                // Use smaller font size to match neighboring color rects
+                                retro_label_sized(ui, "> COLOR:", COLOR_TEXT, 14.0);
 
                                 ui.add_space(8.0);
                                 ui.scope(|ui| {
@@ -653,7 +661,8 @@ impl eframe::App for CubeConvertApp {
                                 
                                 ui.add_space(24.0);
                                 
-                                retro_label(ui, "PALETTE:", COLOR_TEXT);
+                                // Use smaller font size here too
+                                retro_label_sized(ui, "PALETTE:", COLOR_TEXT, 14.0);
 
                                 ui.add_space(8.0);
                                 for color in self.color_history.clone() {
