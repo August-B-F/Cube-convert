@@ -218,6 +218,66 @@ impl CubeConvertApp {
         style.wrap = Some(true);
         ctx.set_style(style);
     }
+    
+    // Custom header bar for borderless window
+    fn custom_title_bar(&self, ctx: &egui::Context) {
+        let height = 32.0;
+        
+        egui::TopBottomPanel::top("title_bar")
+            .frame(egui::Frame::none()
+                .fill(COLOR_TEXT)
+                .inner_margin(egui::Margin::symmetric(12.0, 4.0))
+            )
+            .exact_height(height)
+            .show(ctx, |ui| {
+                // Allow dragging the window by interacting with the title bar background
+                let title_bar_rect = ui.max_rect();
+                let title_bar_response = ui.interact(title_bar_rect, egui::Id::new("title_bar"), egui::Sense::click_and_drag());
+                
+                if title_bar_response.double_clicked() {
+                    let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
+                } else if title_bar_response.drag_started() {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
+
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        // Very subtle icon styling
+                        let desired_size = egui::vec2(14.0, 14.0);
+                        let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
+                        ui.painter().rect_stroke(rect, 0.0, egui::Stroke::new(2.0, COLOR_BG));
+                        ui.painter().rect_filled(rect.shrink(3.0), 0.0, COLOR_BG);
+                        
+                        ui.add_space(8.0);
+                        retro_label_sized(ui, "CUBE-CONVERT v0.1.0", COLOR_BG, 14.0);
+                    });
+
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // Window controls: Close, Maximize, Minimize
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
+
+                        let close_btn = egui::Button::new(egui::RichText::new("X").color(COLOR_BG).size(14.0)).fill(COLOR_TEXT);
+                        if ui.add(close_btn).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+
+                        let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+                        let max_icon = if is_maximized { "[]" } else { "O" };
+                        let max_btn = egui::Button::new(egui::RichText::new(max_icon).color(COLOR_BG).size(14.0)).fill(COLOR_TEXT);
+                        if ui.add(max_btn).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
+                        }
+
+                        let min_btn = egui::Button::new(egui::RichText::new("_").color(COLOR_BG).size(14.0)).fill(COLOR_TEXT);
+                        if ui.add(min_btn).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                        }
+                    });
+                });
+            });
+    }
 
     fn custom_tab(&mut self, ui: &mut egui::Ui, tab: ConversionType, label: &str, ctx: &egui::Context) -> bool {
         let is_selected = self.selected_tab == tab;
@@ -278,6 +338,7 @@ impl CubeConvertApp {
 impl eframe::App for CubeConvertApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.apply_retro_theme(ctx);
+        self.custom_title_bar(ctx);
         self.time_active += ctx.input(|i| i.stable_dt);
 
         if self.show_error_popup {
@@ -520,6 +581,7 @@ impl eframe::App for CubeConvertApp {
             });
         });
 
+        // The central panel where the main content sits
         egui::CentralPanel::default().frame(egui::Frame::none().fill(COLOR_BG)).show(ctx, |ui| {
             ui.add_space(20.0);
 
@@ -709,6 +771,7 @@ impl eframe::App for CubeConvertApp {
             }
         });
 
+        // Ensure the drag overlay draws *over* the entire app
         if overlay_alpha > 0.0 {
             let rect = ctx.screen_rect();
             let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("drop_overlay")));
@@ -825,7 +888,11 @@ fn load_icon() -> Option<egui::IconData> {
 }
 
 fn main() -> eframe::Result<()> {
-    let mut viewport = egui::ViewportBuilder::default().with_inner_size([700.0, 520.0]);
+    // Hide the native OS window decorations so we can draw our own
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([700.0, 520.0])
+        .with_decorations(false) // This is the crucial setting
+        .with_transparent(false);
     
     if let Some(icon) = load_icon() {
         viewport = viewport.with_icon(std::sync::Arc::new(icon));
