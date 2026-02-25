@@ -42,8 +42,7 @@ const COLOR_WHITE: egui::Color32 = egui::Color32::from_rgb(255, 255, 255);
 const COLOR_BLACK: egui::Color32 = egui::Color32::from_rgb(0, 0, 0);
 
 // Draws text inline with other widgets without shifting its container.
-// Allows specifying font size to match surrounding UI.
-// The galley is explicitly centered within the allocated exact size rect.
+// Vertically centers perfectly via LEFT_CENTER alignment.
 fn retro_label_sized(ui: &mut egui::Ui, text: &str, color: egui::Color32, font_size: f32) {
     let galley = ui.painter().layout_no_wrap(
         text.to_string(),
@@ -52,7 +51,13 @@ fn retro_label_sized(ui: &mut egui::Ui, text: &str, color: egui::Color32, font_s
     );
     let (rect, _) = ui.allocate_exact_size(galley.size(), egui::Sense::hover());
     
-    ui.painter().galley(rect.min, galley, color);
+    ui.painter().text(
+        egui::pos2(rect.min.x, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        text,
+        egui::FontId::proportional(font_size),
+        color,
+    );
 }
 
 // Convenience wrapper for standard 16.0 font size labels
@@ -247,30 +252,32 @@ impl CubeConvertApp {
     }
     
     // Custom header bar for borderless window
-    fn custom_title_bar(&self, ctx: &egui::Context) {
+    fn custom_title_bar(&self, ctx: &egui::Context, is_maximized: bool, window_rounding: f32) {
         let height = 32.0;
         
         egui::TopBottomPanel::top("title_bar")
             .frame(egui::Frame::none()
                 .fill(COLOR_TEXT)
-                .inner_margin(egui::Margin::symmetric(12.0, 4.0))
+                .rounding(egui::Rounding { nw: window_rounding, ne: window_rounding, sw: 0.0, se: 0.0 })
             )
             .exact_height(height)
             .show(ctx, |ui| {
-                // Allow dragging the window by interacting with the title bar background
                 let title_bar_rect = ui.max_rect();
+                
+                // Allow dragging the window by interacting with the title bar background
                 let title_bar_response = ui.interact(title_bar_rect, egui::Id::new("title_bar"), egui::Sense::click_and_drag());
                 
                 if title_bar_response.double_clicked() {
-                    let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
                 } else if title_bar_response.drag_started() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
 
-                ui.horizontal(|ui| {
+                // Left side - perfectly centered
+                ui.allocate_ui_at_rect(title_bar_rect, |ui| {
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                        // Very subtle icon styling
+                        ui.add_space(16.0);
+                        
                         let desired_size = egui::vec2(14.0, 14.0);
                         let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
                         ui.painter().rect_stroke(rect, 0.0, egui::Stroke::new(2.0, COLOR_BG));
@@ -279,15 +286,18 @@ impl CubeConvertApp {
                         ui.add_space(8.0);
                         retro_label_sized(ui, "CUBE-CONVERT v0.1.0", COLOR_BG, 14.0);
                     });
+                });
 
+                // Right side - perfectly centered
+                ui.allocate_ui_at_rect(title_bar_rect, |ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.add_space(8.0);
                         ui.spacing_mut().item_spacing.x = 4.0;
 
                         if window_control(ui, "X", true) {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
 
-                        let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
                         let max_icon = if is_maximized { "[]" } else { "O" };
                         if window_control(ui, max_icon, false) {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
@@ -359,8 +369,11 @@ impl CubeConvertApp {
 
 impl eframe::App for CubeConvertApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
+        let window_rounding = if is_maximized { 0.0 } else { 8.0 };
+
         self.apply_retro_theme(ctx);
-        self.custom_title_bar(ctx);
+        self.custom_title_bar(ctx, is_maximized, window_rounding);
         self.time_active += ctx.input(|i| i.stable_dt);
 
         if self.show_error_popup {
@@ -480,7 +493,11 @@ impl eframe::App for CubeConvertApp {
         }
 
         egui::TopBottomPanel::bottom("execution_panel")
-            .frame(egui::Frame::none().inner_margin(egui::Margin::symmetric(24.0, 16.0)).fill(COLOR_BG))
+            .frame(egui::Frame::none()
+                .fill(COLOR_BG)
+                .inner_margin(egui::Margin::symmetric(24.0, 16.0))
+                .rounding(egui::Rounding { nw: 0.0, ne: 0.0, sw: window_rounding, se: window_rounding })
+            )
             .show(ctx, |ui| {
             let rect = ui.max_rect();
             ui.painter().hline(
@@ -822,7 +839,7 @@ impl eframe::App for CubeConvertApp {
             let rect = ctx.screen_rect();
             let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("drop_overlay")));
             
-            painter.rect_filled(rect, 0.0, egui::Color32::from_rgba_premultiplied(150, 158, 123, (220.0 * overlay_alpha) as u8));
+            painter.rect_filled(rect, window_rounding, egui::Color32::from_rgba_premultiplied(150, 158, 123, (220.0 * overlay_alpha) as u8));
             
             let time = ctx.input(|i| i.time);
             let pulse = ((time * 8.0).sin() as f32 * 0.5 + 0.5) * overlay_alpha;
@@ -849,9 +866,16 @@ impl eframe::App for CubeConvertApp {
                 egui::FontId::proportional(24.0),
                 COLOR_TEXT,
             );
-            
-            ctx.request_repaint(); 
         }
+
+        // Draw an outer window stroke if we're not maximized so it has a crisp border
+        if !is_maximized {
+            let rect = ctx.screen_rect();
+            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("window_stroke")));
+            painter.rect_stroke(rect.shrink(1.0), window_rounding, egui::Stroke::new(2.0, COLOR_TEXT));
+        }
+        
+        ctx.request_repaint(); 
     }
 }
 
@@ -935,11 +959,11 @@ fn load_icon() -> Option<egui::IconData> {
 }
 
 fn main() -> eframe::Result<()> {
-    // Hide the native OS window decorations so we can draw our own
+    // Enable transparency so we can draw border-radius properly outside the window
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([700.0, 520.0])
-        .with_decorations(false) // This is the crucial setting
-        .with_transparent(false);
+        .with_decorations(false) 
+        .with_transparent(true); // <-- REQUIRED for rounded corners
     
     if let Some(icon) = load_icon() {
         viewport = viewport.with_icon(std::sync::Arc::new(icon));
