@@ -161,7 +161,7 @@ impl CubeConvertApp {
         visuals.override_text_color = Some(COLOR_TEXT);
         
         visuals.selection.bg_fill = COLOR_TEXT;
-        visuals.selection.stroke = egui::Stroke::new(1.0, COLOR_ACCENT);
+        visuals.selection.stroke = egui::Stroke::new(1.0, COLOR_TEXT);
 
         // Fix for white backgrounds: explicitly set widget backgrounds to COLOR_BG
         visuals.widgets.noninteractive.bg_fill = COLOR_BG;
@@ -175,12 +175,12 @@ impl CubeConvertApp {
 
         visuals.widgets.hovered.bg_fill = COLOR_TEXT;
         visuals.widgets.hovered.bg_stroke = egui::Stroke::new(2.0, COLOR_TEXT);
-        visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, COLOR_ACCENT);
+        visuals.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, COLOR_BG);
         visuals.widgets.hovered.rounding = egui::Rounding::same(0.0);
 
-        visuals.widgets.active.bg_fill = COLOR_ACCENT;
+        visuals.widgets.active.bg_fill = COLOR_TEXT;
         visuals.widgets.active.bg_stroke = egui::Stroke::new(2.0, COLOR_TEXT);
-        visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, COLOR_ACCENT);
+        visuals.widgets.active.fg_stroke = egui::Stroke::new(1.0, COLOR_BG);
         visuals.widgets.active.rounding = egui::Rounding::same(0.0);
         
         // Button-specific fixes for uniform styling
@@ -226,28 +226,22 @@ impl CubeConvertApp {
             let _visuals = ui.style().interact(&response);
             
             let bg_color = if is_selected {
-                COLOR_TEXT
+                COLOR_BG
             } else if response.hovered() {
                 COLOR_FADED
             } else {
-                COLOR_BG
+                COLOR_TEXT
             };
             
             let text_color = if is_selected {
-                COLOR_ACCENT
-            } else {
                 COLOR_TEXT
+            } else {
+                COLOR_BG
             };
 
             // Draw background 
             ui.painter().rect_filled(rect, 0.0, bg_color);
-            
-            // Only draw borders if NOT selected (makes selected tab blend with content)
-            if !is_selected {
-                // Only draw top, left, right borders if we want it to look like a file folder tab
-                // For a more classic retro button look, we draw full rect stroke:
-                 ui.painter().rect_stroke(rect, 0.0, egui::Stroke::new(2.0, COLOR_TEXT));
-            }
+            ui.painter().rect_stroke(rect, 0.0, egui::Stroke::new(2.0, COLOR_TEXT));
             
             ui.painter().text(
                 rect.center(),
@@ -273,7 +267,7 @@ impl eframe::App for CubeConvertApp {
 
         // Render Error Popup if needed (Improved layout)
         if self.show_error_popup {
-            egui::Window::new(egui::RichText::new("! ERROR !").color(COLOR_ACCENT).background_color(COLOR_RED).size(16.0))
+            egui::Window::new(egui::RichText::new("! ERROR !").color(COLOR_BG).background_color(COLOR_RED).size(16.0))
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
@@ -354,7 +348,7 @@ impl eframe::App for CubeConvertApp {
                 AppMessage::Finished => {
                     self.is_converting = false;
                     self.current_file.clear();
-                    if self.status_msg.is_empty() || self.status_msg == "Starting..." {
+                    if self.status_msg.is_empty() || self.status_msg == "INITIALIZING..." || self.status_msg == "Starting..." {
                         self.status_msg = if self.cancel_flag.load(Ordering::Relaxed) {
                             "Cancelled.".to_string()
                         } else {
@@ -443,25 +437,14 @@ impl eframe::App for CubeConvertApp {
                             ui.add_space(8.0);
                             let frames = ["|", "/", "-", "\\\\"];
                             let frame_idx = ((self.time_active * 10.0) as usize) % frames.len();
-                            ui.label(format!("{} {}", frames[frame_idx], self.current_file));
+                            ui.label(egui::RichText::new(format!("{} {}", frames[frame_idx], self.current_file)).color(COLOR_TEXT));
                         }
-                    } else if !self.status_msg.is_empty() {
+                    } else {
+                        let blink = (self.time_active * 4.0).sin() > 0.0;
+                        let cursor = if blink { "_" } else { " " };
+                        
                         if self.status_msg == "Done." {
-                            // A bold retro success banner
-                            let badge_size = egui::vec2(150.0, 32.0);
-                            let (rect, _) = ui.allocate_exact_size(badge_size, egui::Sense::hover());
-                            ui.painter().rect_filled(rect, 0.0, COLOR_TEXT);
-                            
-                            ui.painter().text(
-                                rect.center(),
-                                egui::Align2::CENTER_CENTER,
-                                "+++ SUCCESS +++",
-                                egui::FontId::proportional(16.0),
-                                COLOR_ACCENT,
-                            );
-                            
-                            ui.add_space(16.0);
-                            ui.label(egui::RichText::new("> PROCESS COMPLETE.").color(COLOR_TEXT).strong().size(16.0));
+                            ui.label(egui::RichText::new("+++ SUCCESS +++").color(COLOR_ACCENT).strong().size(16.0));
                             ui.add_space(16.0);
                             if ui.add(egui::Button::new("[ OPEN DIR ]").fill(COLOR_BG)).clicked() {
                                 if let Some(path) = &self.selected_path {
@@ -479,13 +462,19 @@ impl eframe::App for CubeConvertApp {
                                 }
                             }
                         } else if self.status_msg == "Cancelled." || self.status_msg == "ABORTING..." {
-                            ui.label(egui::RichText::new(format!("> {}", self.status_msg)).color(COLOR_RED).strong().size(16.0));
+                            ui.label(egui::RichText::new(format!("> {}{}", self.status_msg, cursor)).color(COLOR_RED).strong().size(16.0));
                         } else if self.status_msg.starts_with("Error") || self.status_msg.starts_with("An error") {
-                            ui.label(egui::RichText::new(format!("> {}", self.status_msg)).color(COLOR_RED).strong().size(16.0));
+                            ui.label(egui::RichText::new(format!("> {}{}", self.status_msg, cursor)).color(COLOR_RED).strong().size(16.0));
+                        } else if !self.status_msg.is_empty() {
+                            ui.label(egui::RichText::new(format!("> {}{}", self.status_msg, cursor)).color(COLOR_TEXT).strong().size(16.0));
                         } else {
-                            let blink = (self.time_active * 4.0).sin() > 0.0;
-                            let cursor = if blink { "_" } else { " " };
-                            ui.label(egui::RichText::new(format!("> {}{}", self.status_msg, cursor)).strong().size(16.0));
+                            // Provide continuous prompt instructions instead of empty space
+                            let prompt = if self.selected_path.is_some() {
+                                "> READY. CLICK EXECUTE TO START."
+                            } else {
+                                "> AWAITING DATA DROP OR SELECTION..."
+                            };
+                            ui.label(egui::RichText::new(format!("{}{}", prompt, cursor)).color(COLOR_TEXT).strong().size(16.0));
                         }
                     }
                 });
@@ -556,7 +545,7 @@ impl eframe::App for CubeConvertApp {
             
             ui.horizontal(|ui| {
                ui.add_space(24.0); // Consistent left margin
-               ui.label(egui::RichText::new(desc_to_show).size(20.0).strong());
+               ui.label(egui::RichText::new(desc_to_show).size(20.0).strong().color(COLOR_TEXT));
             });
             ctx.request_repaint(); // Keep repainting for the typing effect
             
@@ -610,10 +599,10 @@ impl eframe::App for CubeConvertApp {
                             } else {
                                 path_str
                             };
-                            ui.label(display_str);
+                            ui.label(egui::RichText::new(display_str).color(COLOR_TEXT));
                         });
                 } else {
-                    ui.label("> NO INPUT SELECTED.");
+                    ui.label(egui::RichText::new("> NO INPUT SELECTED.").color(COLOR_TEXT));
                 }
             });
             
@@ -629,7 +618,7 @@ impl eframe::App for CubeConvertApp {
                         .show(ui, |ui| {
                             ui.add_enabled_ui(!self.is_converting, |ui| {
                                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                    ui.label("> CLOUD DIRECTORY MODE:");
+                                    ui.label(egui::RichText::new("> CLOUD DIRECTORY MODE:").color(COLOR_TEXT));
                                     ui.add_space(16.0);
                                     ui.radio_value(&mut self.clouds_folder_mode, CloudsFolderMode::StitchImages, "[ STITCH ]");
                                     ui.add_space(16.0);
@@ -649,7 +638,7 @@ impl eframe::App for CubeConvertApp {
                         .show(ui, |ui| {
                         ui.add_enabled_ui(!self.is_converting, |ui| {
                             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                ui.label("> COLOR:");
+                                ui.label(egui::RichText::new("> COLOR:").color(COLOR_TEXT));
                                 ui.add_space(8.0);
                                 ui.scope(|ui| {
                                     ui.spacing_mut().interact_size = egui::vec2(40.0, 24.0);
@@ -658,7 +647,7 @@ impl eframe::App for CubeConvertApp {
                                 
                                 ui.add_space(24.0);
                                 
-                                ui.label("PALETTE:");
+                                ui.label(egui::RichText::new("PALETTE:").color(COLOR_TEXT));
                                 ui.add_space(8.0);
                                 for color in self.color_history.clone() {
                                     let (r, g, b) = (color[0], color[1], color[2]);
