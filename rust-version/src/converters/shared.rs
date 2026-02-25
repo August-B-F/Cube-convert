@@ -37,11 +37,9 @@ pub fn pdf_render_dpi() -> u32 {
 }
 
 pub fn extract_text(pdf_path: &Path) -> Result<String, String> {
-    // Try using pdftotext CLI first (much more reliable for large/complex PDFs)
-    // Poppler's pdftotext almost never drops pages unlike the rust pdf_extract crate.
     let program = pdftotext_bin();
     let mut cmd = Command::new(&program);
-    cmd.arg("-enc").arg("UTF-8"); // Force UTF-8 output to prevent byte translation errors
+    cmd.arg("-enc").arg("UTF-8");
     cmd.arg("-layout");
     cmd.arg(pdf_path);
     cmd.arg("-");
@@ -50,8 +48,6 @@ pub fn extract_text(pdf_path: &Path) -> Result<String, String> {
 
     if let Ok(output) = cmd.output() {
         if output.status.success() {
-            // Use from_utf8_lossy instead of from_utf8 so that a single weird character (like a smart quote)
-            // won't cause the entire text extraction to fail and fallback to the broken pdf_extract crate.
             let text = String::from_utf8_lossy(&output.stdout).into_owned();
             if !text.trim().is_empty() {
                 return Ok(text);
@@ -59,7 +55,6 @@ pub fn extract_text(pdf_path: &Path) -> Result<String, String> {
         }
     }
 
-    // Fallback to pdf_extract crate if pdftotext is missing
     let bytes = fs::read(pdf_path).map_err(|e| format!("read {}: {e}", pdf_path.display()))?;
     pdf_extract::extract_text_from_mem(&bytes)
         .map_err(|e| format!("pdf_extract failed for {}: {e}", pdf_path.display()))
@@ -92,12 +87,20 @@ pub fn process_files<F>(
     process_fn: F,
 ) -> Result<(), String>
 where
-    F: Fn(&Path, &str, &ProgressTx) -> Result<(), String> + Sync + Send,
+    F: Fn(&Path, &Path, &str, &ProgressTx) -> Result<(), String> + Sync + Send,
 {
     let files = collect_pdfs(path, is_folder)?;
     if files.is_empty() {
         return Err("No PDF files found".into());
     }
+
+    let out_dir = if is_folder {
+        let d = path.join("Cube-Converted");
+        let _ = fs::create_dir_all(&d);
+        d
+    } else {
+        path.parent().unwrap_or_else(|| Path::new("")).to_path_buf()
+    };
 
     let _ = tx.send(Progress::Init { total: files.len() });
 
@@ -109,7 +112,7 @@ where
         let stem = pdf.file_stem().unwrap().to_string_lossy().to_string();
         let _ = tx.send(Progress::Start { name: stem.clone() });
 
-        match process_fn(pdf, &stem, &tx) {
+        match process_fn(pdf, &out_dir, &stem, &tx) {
             Ok(_) => {
                 let _ = tx.send(Progress::Done { name: stem });
             }
