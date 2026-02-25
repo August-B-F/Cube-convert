@@ -60,6 +60,31 @@ fn retro_label(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
     retro_label_sized(ui, text, color, 16.0);
 }
 
+// Custom window control button with distinct hover highlights
+fn window_control(ui: &mut egui::Ui, text: &str, is_close: bool) -> bool {
+    let desired_size = egui::vec2(28.0, 24.0);
+    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+    
+    let bg_color = if response.hovered() {
+        if is_close { COLOR_RED } else { COLOR_FADED }
+    } else {
+        COLOR_TEXT
+    };
+    
+    if ui.is_rect_visible(rect) {
+        ui.painter().rect_filled(rect, 0.0, bg_color);
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            text,
+            egui::FontId::proportional(14.0),
+            COLOR_BG,
+        );
+    }
+    
+    response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
 struct CubeConvertApp {
     selected_tab: ConversionType,
     selected_path: Option<PathBuf>,
@@ -72,6 +97,7 @@ struct CubeConvertApp {
     status_msg: String,
     show_error_popup: bool,
     popup_error_msg: String,
+    show_abort_popup: bool,
 
     // Progress state
     progress_current: usize,
@@ -138,6 +164,7 @@ impl Default for CubeConvertApp {
             status_msg: String::new(),
             show_error_popup: false,
             popup_error_msg: String::new(),
+            show_abort_popup: false,
             progress_current: 0,
             progress_total: 0,
             file_fractions: HashMap::new(),
@@ -254,24 +281,19 @@ impl CubeConvertApp {
                     });
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // Window controls: Close, Maximize, Minimize
-                        ui.spacing_mut().item_spacing.x = 0.0;
-                        ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
+                        ui.spacing_mut().item_spacing.x = 4.0;
 
-                        let close_btn = egui::Button::new(egui::RichText::new("X").color(COLOR_BG).size(14.0)).fill(COLOR_TEXT);
-                        if ui.add(close_btn).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        if window_control(ui, "X", true) {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
 
                         let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
                         let max_icon = if is_maximized { "[]" } else { "O" };
-                        let max_btn = egui::Button::new(egui::RichText::new(max_icon).color(COLOR_BG).size(14.0)).fill(COLOR_TEXT);
-                        if ui.add(max_btn).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        if window_control(ui, max_icon, false) {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_maximized));
                         }
 
-                        let min_btn = egui::Button::new(egui::RichText::new("_").color(COLOR_BG).size(14.0)).fill(COLOR_TEXT);
-                        if ui.add(min_btn).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                        if window_control(ui, "_", false) {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
                         }
                     });
@@ -354,6 +376,31 @@ impl eframe::App for CubeConvertApp {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.add(egui::Button::new("[ OK ]").fill(COLOR_BG)).clicked() {
                                 self.show_error_popup = false;
+                            }
+                        });
+                    });
+                });
+        }
+        
+        if self.show_abort_popup {
+            egui::Window::new(egui::RichText::new("! CONFIRM ABORT !").color(COLOR_BG).background_color(COLOR_RED).size(16.0))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .frame(egui::Frame::window(&ctx.style()).fill(COLOR_BG).stroke(egui::Stroke::new(4.0, COLOR_TEXT)).inner_margin(16.0))
+                .show(ctx, |ui| {
+                    ui.label(egui::RichText::new("Are you sure you want to abort the current process?").color(COLOR_TEXT).strong().size(14.0));
+                    ui.add_space(20.0);
+                    ui.horizontal(|ui| {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.add(egui::Button::new(egui::RichText::new("[ YES ]").color(COLOR_BG)).fill(COLOR_RED)).clicked() {
+                                self.cancel_flag.store(true, Ordering::Relaxed);
+                                self.status_msg = "ABORTING...".to_string();
+                                self.show_abort_popup = false;
+                            }
+                            ui.add_space(16.0);
+                            if ui.add(egui::Button::new("[ NO ]").fill(COLOR_BG)).clicked() {
+                                self.show_abort_popup = false;
                             }
                         });
                     });
@@ -573,8 +620,7 @@ impl eframe::App for CubeConvertApp {
                     } else {
                         let btn_text = egui::RichText::new("ABORT").size(18.0).strong().color(COLOR_TEXT);
                         if ui.add(egui::Button::new(btn_text).fill(COLOR_BG).min_size(egui::vec2(120.0, 40.0))).clicked() {
-                            self.cancel_flag.store(true, Ordering::Relaxed);
-                            self.status_msg = "ABORTING...".to_string();
+                            self.show_abort_popup = true;
                         }
                     }
                 });
@@ -814,6 +860,7 @@ impl CubeConvertApp {
         self.is_converting = true;
         self.status_msg = "INITIALIZING...".to_string();
         self.show_error_popup = false;
+        self.show_abort_popup = false;
         self.progress_current = 0;
         self.progress_total = 0;
         self.file_fractions.clear();
