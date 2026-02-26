@@ -3,14 +3,13 @@ use std::path::Path;
 
 use super::{shared, CancelFlag, ProgressTx};
 
-/// Synthesizes a clean, realistic double-thump heartbeat for a given BPM.
-/// Uses sine envelopes to create a smooth kick-drum style pulse with NO ringing.
-fn generate_beat(bpm: f32, sample_rate: u32) -> Vec<f32> {
-    let beat_len_sec = 60.0 / bpm;
+/// Synthesizes a clean, realistic double-thump heartbeat.
+/// Returns a single beat cycle adjusted for the instantaneous BPM.
+fn generate_single_beat(current_bpm: f32, sample_rate: u32) -> Vec<f32> {
+    let beat_len_sec = 60.0 / current_bpm;
     let num_samples = (beat_len_sec * sample_rate as f32) as usize;
     let mut beat = vec![0.0; num_samples];
 
-    // Scale durations down if BPM is very high to prevent overlapping
     let lub_len_sec = 0.1_f32.min(beat_len_sec * 0.3);
     let gap_len_sec = 0.05_f32.min(beat_len_sec * 0.1);
     let dub_len_sec = 0.08_f32.min(beat_len_sec * 0.25);
@@ -19,18 +18,19 @@ fn generate_beat(bpm: f32, sample_rate: u32) -> Vec<f32> {
     let gap_samples = (gap_len_sec * sample_rate as f32) as usize;
     let dub_samples = (dub_len_sec * sample_rate as f32) as usize;
 
-    // Deep, thumping low frequencies
-    let lub_freq = 45.0; // The deep 'lub'
-    let dub_freq = 55.0; // The slightly higher 'dub'
+    let lub_freq = 45.0; 
+    let dub_freq = 55.0; 
+
+    // Louder amplitude multiplier
+    let amp_mult = 1.8;
 
     // 1. Generate S1 (Lub)
     for i in 0..lub_samples {
         if i >= num_samples { break; }
         let t = i as f32 / sample_rate as f32;
-        // Sine window for smooth attack and decay (no clicking)
         let env = (std::f32::consts::PI * i as f32 / lub_samples as f32).sin(); 
         let wave = (2.0 * std::f32::consts::PI * lub_freq * t).sin();
-        beat[i] = wave * env * 0.95; // 95% volume
+        beat[i] = (wave * env * 1.0 * amp_mult).clamp(-1.0, 1.0);
     }
 
     // 2. Generate S2 (Dub)
@@ -41,7 +41,7 @@ fn generate_beat(bpm: f32, sample_rate: u32) -> Vec<f32> {
         let t = i as f32 / sample_rate as f32;
         let env = (std::f32::consts::PI * i as f32 / dub_samples as f32).sin();
         let wave = (2.0 * std::f32::consts::PI * dub_freq * t).sin();
-        beat[idx] = wave * env * 0.70; // Dub is slightly quieter
+        beat[idx] = (wave * env * 0.75 * amp_mult).clamp(-1.0, 1.0);
     }
 
     beat
@@ -61,32 +61,33 @@ pub fn convert_bpm(
         }
 
         let text = shared::extract_text(pdf)?;
-        let digits: String = text.chars().filter(|c| c.is_ascii_digit()).collect();
-
-        let mut bpm_list: Vec<u32> = Vec::new();
-        for chunk in digits.as_bytes().chunks(3) {
-            if let Ok(n) = std::str::from_utf8(chunk).unwrap_or("").parse::<u32>() {
-                if n > 0 { // Ignore 0 BPM to prevent divide-by-zero
-                    bpm_list.push(n);
+        
+        // Better Parsing: Split by whitespace to separate minute markers (01, 02) from real BPMs
+        let mut bpm_list: Vec<f32> = Vec::new();
+        for token in text.split_whitespace() {
+            // Remove any non-digit characters just in case
+            let clean_token: String = token.chars().filter(|c| c.is_ascii_digit()).collect();
+            if let Ok(val) = clean_token.parse::<f32>() {
+                // Filter out minute markers and unreasonably low BPMs
+                if val >= 60.0 {
+                    bpm_list.push(val);
                 }
             }
         }
+
         if bpm_list.is_empty() {
-            return Err("No valid BPM data found".into());
+            return Err("No valid BPM data found (>60 BPM)".into());
         }
 
         let sample_rate = 44100u32;
         let total_duration_secs = 12.0 * 60.0;
         let target_samples = (total_duration_secs * sample_rate as f64) as usize;
         
-        let time_per_bpm = total_duration_secs / bpm_list.len() as f64;
-        let samples_per_bpm_block = (time_per_bpm * sample_rate as f64) as usize;
-
         let tmp_dir = shared::make_temp_dir("bpm")?;
         let tmp = tmp_dir.join(format!("{name}_tmp.wav"));
         {
             let spec = hound::WavSpec {
-                channels: 2, // Stereo output
+                channels: 2, 
                 sample_rate,
                 bits_per_sample: 32,
                 sample_format: hound::SampleFormat::Float,
@@ -95,36 +96,39 @@ pub fn convert_bpm(
                 .map_err(|e| format!("create {}: {e}", tmp.display()))?;
 
             let mut total_written = 0usize;
-
-            for &bpm in &bpm_list {
+            let n_bpms = bpm_list.len();
+            
+            // Continuous generation loop
+            while total_written < target_samples {
                 if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                     return Err("Cancelled.".into());
                 }
 
-                let beat_data = generate_beat(bpm as f32, sample_rate);
-                let mut block_written = 0usize;
+                // Determine exact time in the timeline
+                let current_time_sec = total_written as f64 / sample_rate as f64;
+                
+                // Map current time to the fractional index of our BPM array
+                let progress = current_time_sec / total_duration_secs;
+                let exact_index = progress * (n_bpms.saturating_sub(1) as f64);
+                
+                let idx1 = exact_index.floor() as usize;
+                let idx2 = (idx1 + 1).min(n_bpms - 1);
+                let frac = exact_index - idx1 as f64;
 
-                // Loop the generated heartbeat until this BPM's time block is full
-                while block_written < samples_per_bpm_block && total_written < target_samples {
-                    for &sample in &beat_data {
-                        if block_written >= samples_per_bpm_block || total_written >= target_samples {
-                            break;
-                        }
-                        
-                        w.write_sample(sample).map_err(|e| e.to_string())?; // Left channel
-                        w.write_sample(sample).map_err(|e| e.to_string())?; // Right channel
-                        
-                        block_written += 1;
-                        total_written += 1;
-                    }
+                // Smooth linear interpolation between the two BPM points
+                let current_bpm = bpm_list[idx1] + (bpm_list[idx2] - bpm_list[idx1]) * frac as f32;
+
+                // Generate exactly one beat cycle based on the *current* smooth BPM
+                let beat_data = generate_single_beat(current_bpm, sample_rate);
+
+                for &sample in &beat_data {
+                    if total_written >= target_samples { break; }
+                    
+                    w.write_sample(sample).map_err(|e| e.to_string())?; // Left
+                    w.write_sample(sample).map_err(|e| e.to_string())?; // Right
+                    
+                    total_written += 1;
                 }
-            }
-
-            // Pad with silence if we somehow fell slightly short of exactly 12 minutes
-            while total_written < target_samples {
-                w.write_sample(0.0f32).map_err(|e| e.to_string())?;
-                w.write_sample(0.0f32).map_err(|e| e.to_string())?;
-                total_written += 1;
             }
 
             w.finalize().map_err(|e| e.to_string())?;
@@ -137,7 +141,7 @@ pub fn convert_bpm(
             "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(), "-stats".into(),
             "-i".into(), tmp.to_string_lossy().to_string(),
             "-vn".into(), "-ar".into(), "44100".into(), "-ac".into(), "2".into(),
-            "-b:a".into(), "192k".into(), "-codec:a".into(), "libmp3lame".into(),
+            "-b:a".into(), "320k".into(), "-codec:a".into(), "libmp3lame".into(),
             "-preset".into(), preset,
             partial_out.to_string_lossy().to_string(),
         ];

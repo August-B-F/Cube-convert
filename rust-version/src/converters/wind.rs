@@ -17,7 +17,9 @@ pub fn convert_wind(
         }
 
         let text = shared::extract_text(pdf)?;
-        let mut wind_intensities: Vec<Vec<f32>> = Vec::new();
+        
+        // Flatten all intensities into a single continuous list
+        let mut wind_intensities: Vec<f32> = Vec::new();
 
         for line in text.split('\n') {
             let stripped = if line.len() > 2 { &line[2..] } else { line };
@@ -25,16 +27,11 @@ pub fn convert_wind(
                 .split(',')
                 .filter_map(|s| s.trim().parse::<f32>().ok())
                 .collect();
-            if !day.is_empty() {
-                wind_intensities.push(day);
-            }
+            wind_intensities.extend(day);
         }
 
         if wind_intensities.is_empty() {
             return Err("No wind intensity data found".into());
-        }
-        if wind_intensities.len() >= 25 {
-            wind_intensities.truncate(24);
         }
 
         let wind_path = Path::new("assets/Wind_Loop.wav");
@@ -46,9 +43,6 @@ pub fn convert_wind(
             .map_err(|e| format!("open {}: {e}", wind_path.display()))?;
         
         let wind_spec = reader.spec();
-        
-        // This was the bug: If the WAV is 16-bit, we must divide by 32768.0, not i32::MAX.
-        // i32::MAX makes 16-bit values so small they become completely silent!
         let wind_data: Vec<f32> = match wind_spec.sample_format {
             hound::SampleFormat::Float => {
                 reader.samples::<f32>().map(|s| s.unwrap_or(0.0)).collect()
@@ -67,47 +61,39 @@ pub fn convert_wind(
         
         let n_wind = wind_data.len();
         let sample_rate = 44100u32;
-        let duration_per_day = 30.0f32;
-        let mut output: Vec<f32> = Vec::new();
+        let total_duration_secs = 12.0 * 60.0; // 12 minutes
+        let target_samples = (sample_rate as f64 * total_duration_secs) as usize;
+        
+        let n_points = wind_intensities.len();
+        
+        let mut output: Vec<f32> = Vec::with_capacity(target_samples);
 
-        for day in &wind_intensities {
-            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        for i in 0..target_samples {
+            if i % 44100 == 0 && cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 return Err("Cancelled.".into());
             }
 
-            if day.is_empty() { continue; }
+            // Map current sample directly to fractional position across all data points
+            let progress = i as f64 / target_samples as f64;
+            let exact_index = progress * (n_points.saturating_sub(1) as f64);
+            
+            let idx1 = exact_index.floor() as usize;
+            let idx2 = (idx1 + 1).min(n_points - 1);
+            let frac = (exact_index - idx1 as f64) as f32;
 
-            let dur_per_int = duration_per_day / day.len() as f32;
-            let samples = (sample_rate as f32 * duration_per_day) as usize;
+            // Perfectly smooth linear interpolation across the entire timeline
+            let intensity = wind_intensities[idx1] + (wind_intensities[idx2] - wind_intensities[idx1]) * frac;
 
-            let mut intensity_start = day[0];
+            let wind_index = i % n_wind;
+            
+            let value = if intensity <= 1.0 {
+                0.0
+            } else {
+                wind_data[wind_index] * intensity / 15.0
+            };
 
-            for i in 0..samples {
-                let elapsed = i as f32 / sample_rate as f32;
-                let intensity_index = (elapsed / dur_per_int) as usize;
-                let intensity_index = intensity_index.min(day.len() - 1);
-                let intensity_end = day[intensity_index];
-
-                let intensity = if intensity_index == day.len() - 1 {
-                    intensity_end
-                } else {
-                    let t = (elapsed - intensity_index as f32 * dur_per_int) / dur_per_int;
-                    intensity_start + (intensity_end - intensity_start) * t
-                };
-
-                intensity_start = intensity_end;
-
-                let wind_index = i % n_wind;
-                
-                let value = if intensity <= 1.0 {
-                    0.0
-                } else {
-                    wind_data[wind_index] * intensity / 15.0
-                };
-
-                // Clamp to prevent audio corruption during float->int wav conversion
-                output.push((value * 1.412).clamp(-1.0, 1.0));
-            }
+            // Audio gain matching python with a hard clip protector
+            output.push((value * 1.412).clamp(-1.0, 1.0));
         }
 
         let tmp_dir = shared::make_temp_dir("wind")?;
