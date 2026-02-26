@@ -45,12 +45,23 @@ pub fn convert_wind(
         let mut reader = hound::WavReader::open(wind_path)
             .map_err(|e| format!("open {}: {e}", wind_path.display()))?;
         
-        let wind_data: Vec<f32> = match reader.spec().sample_format {
+        let wind_spec = reader.spec();
+        
+        // This was the bug: If the WAV is 16-bit, we must divide by 32768.0, not i32::MAX.
+        // i32::MAX makes 16-bit values so small they become completely silent!
+        let wind_data: Vec<f32> = match wind_spec.sample_format {
             hound::SampleFormat::Float => {
                 reader.samples::<f32>().map(|s| s.unwrap_or(0.0)).collect()
             }
             hound::SampleFormat::Int => {
-                reader.samples::<i32>().map(|s| s.unwrap_or(0) as f32 / i32::MAX as f32).collect()
+                let max_val = match wind_spec.bits_per_sample {
+                    8 => 128.0,
+                    16 => 32768.0,
+                    24 => 8388608.0,
+                    32 => 2147483648.0,
+                    _ => 32768.0,
+                };
+                reader.samples::<i32>().map(|s| (s.unwrap_or(0) as f32) / max_val).collect()
             }
         };
         
@@ -86,7 +97,6 @@ pub fn convert_wind(
 
                 intensity_start = intensity_end;
 
-                // Simple direct loop of the source file, just like python
                 let wind_index = i % n_wind;
                 
                 let value = if intensity <= 1.0 {
