@@ -120,8 +120,8 @@ struct CubeConvertApp {
     tab_animations: HashMap<ConversionType, f32>,
 }
 
-impl Default for CubeConvertApp {
-    fn default() -> Self {
+impl CubeConvertApp {
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let (tx, rx) = crossbeam_channel::unbounded();
         
         let mut color_history = Vec::new();
@@ -157,7 +157,7 @@ impl Default for CubeConvertApp {
         tab_animations.insert(ConversionType::Text, 0.0);
         tab_animations.insert(ConversionType::Slideshow, 0.0);
 
-        Self {
+        let mut app = Self {
             selected_tab: ConversionType::Wind,
             selected_path: None,
             last_dir: None,
@@ -179,11 +179,24 @@ impl Default for CubeConvertApp {
             cancel_flag: Arc::new(AtomicBool::new(false)),
             time_active: 0.0,
             tab_animations,
-        }
-    }
-}
+        };
 
-impl CubeConvertApp {
+        // Load fonts EXACTLY ONCE on startup
+        app.setup_fonts(&cc.egui_ctx);
+
+        app
+    }
+
+    fn setup_fonts(&self, ctx: &egui::Context) {
+        let mut fonts = egui::FontDefinitions::default();
+        if let Ok(font_data) = std::fs::read("assets/pixel.ttf") {
+            fonts.font_data.insert("pixel".to_owned(), egui::FontData::from_owned(font_data));
+            fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap().insert(0, "pixel".to_owned());
+            fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap().insert(0, "pixel".to_owned());
+        }
+        ctx.set_fonts(fonts);
+    }
+
     fn save_settings(&self) {
         let mut out = String::new();
         out.push_str(&format!("[{},{},{}]", self.rgb_color[0], self.rgb_color[1], self.rgb_color[2]));
@@ -194,14 +207,6 @@ impl CubeConvertApp {
     }
 
     fn apply_retro_theme(&self, ctx: &egui::Context) {
-        let mut fonts = egui::FontDefinitions::default();
-        if let Ok(font_data) = std::fs::read("assets/pixel.ttf") {
-            fonts.font_data.insert("pixel".to_owned(), egui::FontData::from_owned(font_data));
-            fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap().insert(0, "pixel".to_owned());
-            fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap().insert(0, "pixel".to_owned());
-        }
-        ctx.set_fonts(fonts);
-
         let mut visuals = egui::Visuals::light();
         
         visuals.window_fill = COLOR_BG;
@@ -284,7 +289,7 @@ impl CubeConvertApp {
                         ui.painter().rect_filled(rect.shrink(3.0), 0.0, COLOR_BG);
                         
                         ui.add_space(8.0);
-                        retro_label_sized(ui, "CUBE-CONVERT v0.1.0", COLOR_BG, 14.0);
+                        retro_label_sized(ui, "CUBE-CONVERT v0.1.1", COLOR_BG, 14.0);
                     });
                 });
 
@@ -372,6 +377,7 @@ impl eframe::App for CubeConvertApp {
         let is_maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
         let window_rounding = if is_maximized { 0.0 } else { 8.0 };
 
+        // Do not call setup_fonts here, only apply colors/styles
         self.apply_retro_theme(ctx);
         self.custom_title_bar(ctx, is_maximized, window_rounding);
         self.time_active += ctx.input(|i| i.stable_dt);
@@ -622,7 +628,7 @@ impl eframe::App for CubeConvertApp {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if !self.is_converting {
-                        let exec_enabled = self.selected_path.is_some();
+                        let exec_enabled = self.selected_path.is_some() && (self.selected_tab != ConversionType::Slideshow || self.is_folder);
                         let exec_fill = if exec_enabled { COLOR_BG } else { COLOR_FADED };
                         
                         let mut btn_exec = egui::Button::new(egui::RichText::new("EXECUTE").size(18.0).strong().color(COLOR_TEXT))
@@ -662,6 +668,10 @@ impl eframe::App for CubeConvertApp {
             if tab_changed {
                 self.status_msg.clear();
                 self.show_error_popup = false;
+                // If they swap to Slideshow and currently have a file selected, clear it
+                if self.selected_tab == ConversionType::Slideshow && !self.is_folder {
+                    self.selected_path = None;
+                }
             }
 
             let rect = ui.max_rect();
@@ -696,26 +706,29 @@ impl eframe::App for CubeConvertApp {
                  ui.add_space(24.0);
                  
                  let enabled = !self.is_converting;
-                 let fill = if enabled { COLOR_BG } else { COLOR_FADED };
                  
-                 let mut btn_file = egui::Button::new(egui::RichText::new("[ SELECT FILE ]").color(COLOR_TEXT)).fill(fill);
-                 if !enabled { btn_file = btn_file.sense(egui::Sense::hover()); }
-                 
-                 if ui.add(btn_file).clicked() && enabled {
-                     let mut dialog = FileDialog::new().add_filter("PDF", &["pdf"]);
-                     if let Some(dir) = &self.last_dir { dialog = dialog.set_directory(dir); }
-                     if let Some(path) = dialog.pick_file() {
-                         if let Some(parent) = path.parent() { self.last_dir = Some(parent.to_path_buf()); }
-                         self.selected_path = Some(path);
-                         self.is_folder = false;
-                         self.status_msg.clear();
-                         self.time_active = 0.0;
+                 // Hide SELECT FILE if slideshow is selected to prevent confusion
+                 if self.selected_tab != ConversionType::Slideshow {
+                     let fill = if enabled { COLOR_BG } else { COLOR_FADED };
+                     let mut btn_file = egui::Button::new(egui::RichText::new("[ SELECT FILE ]").color(COLOR_TEXT)).fill(fill);
+                     if !enabled { btn_file = btn_file.sense(egui::Sense::hover()); }
+                     
+                     if ui.add(btn_file).clicked() && enabled {
+                         let mut dialog = FileDialog::new().add_filter("PDF", &["pdf"]);
+                         if let Some(dir) = &self.last_dir { dialog = dialog.set_directory(dir); }
+                         if let Some(path) = dialog.pick_file() {
+                             if let Some(parent) = path.parent() { self.last_dir = Some(parent.to_path_buf()); }
+                             self.selected_path = Some(path);
+                             self.is_folder = false;
+                             self.status_msg.clear();
+                             self.time_active = 0.0;
+                         }
                      }
+                     ui.add_space(16.0);
                  }
                  
-                 ui.add_space(16.0);
-                 
-                 let mut btn_folder = egui::Button::new(egui::RichText::new("[ SELECT FOLDER ]").color(COLOR_TEXT)).fill(fill);
+                 let folder_fill = if enabled { COLOR_BG } else { COLOR_FADED };
+                 let mut btn_folder = egui::Button::new(egui::RichText::new("[ SELECT FOLDER ]").color(COLOR_TEXT)).fill(folder_fill);
                  if !enabled { btn_folder = btn_folder.sense(egui::Sense::hover()); }
                  
                  if ui.add(btn_folder).clicked() && enabled {
@@ -816,7 +829,6 @@ impl eframe::App for CubeConvertApp {
                                     
                                     let (rect, response) = ui.allocate_exact_size(egui::vec2(24.0, 24.0), egui::Sense::click());
                                     if ui.is_rect_visible(rect) {
-                                        // Removed white hover stroke, it is always COLOR_TEXT
                                         ui.painter().rect(rect, 0.0, color32, egui::Stroke::new(2.0, COLOR_TEXT));
                                     }
                                     
@@ -966,7 +978,6 @@ fn main() -> eframe::Result<()> {
         .with_decorations(false) 
         .with_transparent(true);
     
-    // Set icon without Arc wrapper - eframe handles the Arc internally
     if let Some(icon) = icon_data {
         viewport = viewport.with_icon(Arc::new(icon));
     }
@@ -979,6 +990,6 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Cube-Convert",
         options,
-        Box::new(|_cc| Box::new(CubeConvertApp::default())),
+        Box::new(|cc| Box::new(CubeConvertApp::new(cc))),
     )
 }
