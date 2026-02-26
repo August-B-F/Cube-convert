@@ -37,33 +37,11 @@ pub fn convert_slideshow(
     // Create temp directory and copy images with sequential names
     let tmp_dir = shared::make_temp_dir("slideshow")?;
     
-    // Validate dimensions and copy files
-    let mut reference_dimensions: Option<(u32, u32)> = None;
-    
+    // Copy images with a unified extension for the image2 sequence demuxer
     for (i, src_file) in files.iter().enumerate() {
-        // Check dimensions using image crate
-        if let Ok(img) = image::io::Reader::open(src_file) {
-            if let Ok(img) = img.decode() {
-                let (width, height) = (img.width(), img.height());
-                
-                if let Some((ref_w, ref_h)) = reference_dimensions {
-                    if width != ref_w || height != ref_h {
-                        let _ = fs::remove_dir_all(&tmp_dir);
-                        return Err(format!(
-                            "Image dimension mismatch: {} is {}x{}, but first image was {}x{}. All images must have the same dimensions.",
-                            src_file.file_name().unwrap_or_default().to_string_lossy(),
-                            width, height, ref_w, ref_h
-                        ));
-                    }
-                } else {
-                    reference_dimensions = Some((width, height));
-                }
-            }
-        }
-        
-        // Copy with sequential naming: img_0001.png, img_0002.png, etc.
-        let ext = src_file.extension().and_then(|e| e.to_str()).unwrap_or("png");
-        let dest = tmp_dir.join(format!("img_{:04}.{}", i + 1, ext));
+        // Force .jpg extension so FFmpeg's pattern matching reads them all seamlessly.
+        // FFmpeg reads the actual file headers, so PNGs disguised as JPGs decode perfectly.
+        let dest = tmp_dir.join(format!("img_{:05}.jpg", i + 1));
         
         if let Err(e) = fs::copy(src_file, &dest) {
             let _ = fs::remove_dir_all(&tmp_dir);
@@ -71,42 +49,32 @@ pub fn convert_slideshow(
         }
     }
 
-    // Create concat file with relative paths
-    let concat_file = tmp_dir.join("concat.txt");
-    let mut content = String::new();
-    
-    for i in 0..files.len() {
-        let ext = files[i].extension().and_then(|e| e.to_str()).unwrap_or("png");
-        content.push_str(&format!("file 'img_{:04}.{}'\n", i + 1, ext));
-        content.push_str("duration 4.0\n");
-    }
-    // Add last image again without duration for proper ending
-    if let Some(last) = files.last() {
-        let ext = last.extension().and_then(|e| e.to_str()).unwrap_or("png");
-        content.push_str(&format!("file 'img_{:04}.{}'\n", files.len(), ext));
-    }
-    
-    fs::write(&concat_file, content).map_err(|e| e.to_string())?;
-
     let total_frames = files.len() * 4 * 25; // 4 seconds per image at 25fps
     
+    // Standardize to a 1080p canvas.
+    // scale: shrinks large images or grows small ones to fit within 1920x1080 while maintaining aspect ratio.
+    // pad: fills the remaining space with black borders to hit exactly 1920x1080.
+    // format=yuv420p guarantees even dimensions, eliminating the "Invalid argument" libx264 error.
+    let filter = "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p";
+
     let args: Vec<String> = vec![
         "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(), "-stats".into(),
-        "-f".into(), "concat".into(), "-safe".into(), "0".into(),
-        "-i".into(), concat_file.to_string_lossy().to_string(),
-        "-vsync".into(), "vfr".into(), // Variable frame rate for better concat handling
-        "-r".into(), "25".into(), "-c:v".into(), "libx264".into(),
-        "-preset".into(), shared::ffmpeg_preset(), "-pix_fmt".into(), "yuv420p".into(),
+        "-framerate".into(), "0.25".into(), // 1 frame every 4 seconds
+        "-i".into(), "img_%05d.jpg".into(),
+        "-vf".into(), filter.into(),
+        "-r".into(), "25".into(), 
+        "-c:v".into(), "libx264".into(),
+        "-preset".into(), shared::ffmpeg_preset(), 
         partial_out.to_string_lossy().to_string()
     ];
 
-    // Change working directory to temp dir for relative paths
+    // Change working directory to temp dir so FFmpeg finds the sequence naturally
     let original_dir = std::env::current_dir().map_err(|e| e.to_string())?;
     std::env::set_current_dir(&tmp_dir).map_err(|e| e.to_string())?;
     
     let result = shared::run_ffmpeg(&args, Some(total_frames), &tx, &stem, cancel.clone());
     
-    // Restore original directory
+    // Restore original directory immediately
     let _ = std::env::set_current_dir(original_dir);
     let _ = fs::remove_dir_all(&tmp_dir);
 
