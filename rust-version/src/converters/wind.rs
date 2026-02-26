@@ -44,20 +44,17 @@ pub fn convert_wind(
 
         let mut reader = hound::WavReader::open(wind_path)
             .map_err(|e| format!("open {}: {e}", wind_path.display()))?;
-        let wind_spec = reader.spec();
-        let wind_sample_rate = wind_spec.sample_rate as f32;
-        let wind_data: Vec<f32> = match wind_spec.sample_format {
+        
+        let wind_data: Vec<f32> = match reader.spec().sample_format {
             hound::SampleFormat::Float => {
                 reader.samples::<f32>().map(|s| s.unwrap_or(0.0)).collect()
             }
-            hound::SampleFormat::Int => reader
-                .samples::<i32>()
-                .map(|s| s.unwrap_or(0) as f32 / i32::MAX as f32)
-                .collect(),
+            hound::SampleFormat::Int => {
+                reader.samples::<i32>().map(|s| s.unwrap_or(0) as f32 / i32::MAX as f32).collect()
+            }
         };
+        
         let n_wind = wind_data.len();
-        let wind_duration = n_wind as f32 / wind_sample_rate;
-
         let sample_rate = 44100u32;
         let duration_per_day = 30.0f32;
         let mut output: Vec<f32> = Vec::new();
@@ -72,7 +69,6 @@ pub fn convert_wind(
             let dur_per_int = duration_per_day / day.len() as f32;
             let samples = (sample_rate as f32 * duration_per_day) as usize;
 
-            // Match Python: intensity_start carries over between samples
             let mut intensity_start = day[0];
 
             for i in 0..samples {
@@ -84,25 +80,23 @@ pub fn convert_wind(
                 let intensity = if intensity_index == day.len() - 1 {
                     intensity_end
                 } else {
-                    // transition_fraction = 1.0, so transition_duration == dur_per_int
                     let t = (elapsed - intensity_index as f32 * dur_per_int) / dur_per_int;
                     intensity_start + (intensity_end - intensity_start) * t
                 };
 
                 intensity_start = intensity_end;
 
-                // Use wind sample rate to index into wind_data, matching Python's wind_index logic
-                let wind_index = ((i as f32 / sample_rate as f32 * wind_sample_rate) as usize) % n_wind;
-                let wind_sample = wind_data[wind_index];
-
+                // Simple direct loop of the source file, just like python
+                let wind_index = i % n_wind;
+                
                 let value = if intensity <= 1.0 {
                     0.0
                 } else {
-                    wind_sample * intensity / 15.0
+                    wind_data[wind_index] * intensity / 15.0
                 };
 
-                // Python applies +3dB via pydub (factor ~1.412)
-                output.push(value * 1.412);
+                // Clamp to prevent audio corruption during float->int wav conversion
+                output.push((value * 1.412).clamp(-1.0, 1.0));
             }
         }
 
