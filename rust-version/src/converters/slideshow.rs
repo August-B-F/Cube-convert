@@ -34,33 +34,51 @@ pub fn convert_slideshow(
     let stem = folder_path.file_name().unwrap_or_default().to_string_lossy().to_string();
     let _ = tx.send(super::Progress::Start { name: stem.clone() });
 
-    // Create temp directory and copy images with sequential names
     let tmp_dir = shared::make_temp_dir("slideshow")?;
     
-    // Copy images with a unified extension for the image2 sequence demuxer
+    // Copy files preserving their ORIGINAL extension, but with sequential naming.
+    // FFmpeg's image2 demuxer gets confused if you rename a PNG to .jpg
+    // We will use a concat demuxer again, but a properly generated one,
+    // combined with the safety of the scale/pad filter.
+    let concat_file = tmp_dir.join("concat.txt");
+    let mut concat_content = String::new();
+
     for (i, src_file) in files.iter().enumerate() {
-        // Force .jpg extension so FFmpeg's pattern matching reads them all seamlessly.
-        // FFmpeg reads the actual file headers, so PNGs disguised as JPGs decode perfectly.
-        let dest = tmp_dir.join(format!("img_{:05}.jpg", i + 1));
+        let ext = src_file.extension().and_then(|e| e.to_str()).unwrap_or("png");
+        let safe_name = format!("img_{:05}.{}", i + 1, ext);
+        let dest = tmp_dir.join(&safe_name);
         
         if let Err(e) = fs::copy(src_file, &dest) {
             let _ = fs::remove_dir_all(&tmp_dir);
             return Err(format!("Failed to copy image: {}", e));
         }
+
+        concat_content.push_str(&format!("file '{}'\n", safe_name));
+        concat_content.push_str("duration 4.0\n");
+    }
+    
+    // Concat requires the last file to be repeated without a duration to finish correctly
+    if let Some(last_file) = files.last() {
+        let ext = last_file.extension().and_then(|e| e.to_str()).unwrap_or("png");
+        concat_content.push_str(&format!("file 'img_{:05}.{}'\n", files.len(), ext));
     }
 
-    let total_frames = files.len() * 4 * 25; // 4 seconds per image at 25fps
+    fs::write(&concat_file, concat_content).map_err(|e| e.to_string())?;
+
+    let total_frames = files.len() * 4 * 25; 
     
-    // Standardize to a 1080p canvas.
-    // scale: shrinks large images or grows small ones to fit within 1920x1080 while maintaining aspect ratio.
-    // pad: fills the remaining space with black borders to hit exactly 1920x1080.
-    // format=yuv420p guarantees even dimensions, eliminating the "Invalid argument" libx264 error.
-    let filter = "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,format=yuv420p";
+    // The previous scale filter was mathematically dangerous.
+    // If it scaled a 699x241 image down, the resulting dimensions might be odd numbers.
+    // pad=1920:1080 requires the input to have even dimensions or it crashes libx264.
+    // Adding `scale=...:eval=init` and wrapping the iw/ih math in `ceil` or explicitly 
+    // forcing the scale to output even numbers before padding fixes this.
+    // We force the scale to output even numbers by using 'trunc(ow/2)*2:trunc(oh/2)*2' equivalent:
+    let filter = "scale='min(1920,iw)':'min(1080,ih)':force_original_aspect_ratio=decrease,scale=trunc(iw/2)*2:trunc(ih/2)*2,pad=1920:1080:(1920-iw)/2:(1080-ih)/2,format=yuv420p";
 
     let args: Vec<String> = vec![
         "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(), "-stats".into(),
-        "-framerate".into(), "0.25".into(), // 1 frame every 4 seconds
-        "-i".into(), "img_%05d.jpg".into(),
+        "-f".into(), "concat".into(), "-safe".into(), "0".into(),
+        "-i".into(), "concat.txt".into(),
         "-vf".into(), filter.into(),
         "-r".into(), "25".into(), 
         "-c:v".into(), "libx264".into(),
@@ -68,13 +86,11 @@ pub fn convert_slideshow(
         partial_out.to_string_lossy().to_string()
     ];
 
-    // Change working directory to temp dir so FFmpeg finds the sequence naturally
     let original_dir = std::env::current_dir().map_err(|e| e.to_string())?;
     std::env::set_current_dir(&tmp_dir).map_err(|e| e.to_string())?;
     
     let result = shared::run_ffmpeg(&args, Some(total_frames), &tx, &stem, cancel.clone());
     
-    // Restore original directory immediately
     let _ = std::env::set_current_dir(original_dir);
     let _ = fs::remove_dir_all(&tmp_dir);
 
