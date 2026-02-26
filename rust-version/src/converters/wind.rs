@@ -44,7 +44,9 @@ pub fn convert_wind(
 
         let mut reader = hound::WavReader::open(wind_path)
             .map_err(|e| format!("open {}: {e}", wind_path.display()))?;
-        let wind_data: Vec<f32> = match reader.spec().sample_format {
+        let wind_spec = reader.spec();
+        let wind_sample_rate = wind_spec.sample_rate as f32;
+        let wind_data: Vec<f32> = match wind_spec.sample_format {
             hound::SampleFormat::Float => {
                 reader.samples::<f32>().map(|s| s.unwrap_or(0.0)).collect()
             }
@@ -54,6 +56,8 @@ pub fn convert_wind(
                 .collect(),
         };
         let n_wind = wind_data.len();
+        let wind_duration = n_wind as f32 / wind_sample_rate;
+
         let sample_rate = 44100u32;
         let duration_per_day = 30.0f32;
         let mut output: Vec<f32> = Vec::new();
@@ -64,18 +68,40 @@ pub fn convert_wind(
             }
 
             if day.is_empty() { continue; }
+
             let dur_per_int = duration_per_day / day.len() as f32;
             let samples = (sample_rate as f32 * duration_per_day) as usize;
 
-            for i in 0..samples {
-                let t_sec = i as f32 / sample_rate as f32;
-                let idx = ((t_sec / dur_per_int) as usize).min(day.len() - 1);
-                let next = (idx + 1).min(day.len() - 1);
-                let frac = (t_sec - idx as f32 * dur_per_int) / dur_per_int;
-                let intensity = day[idx] + (day[next] - day[idx]) * frac;
+            // Match Python: intensity_start carries over between samples
+            let mut intensity_start = day[0];
 
-                let wind_sample = wind_data[i % n_wind];
-                let value = if intensity <= 1.0 { 0.0 } else { wind_sample * intensity / 15.0 };
+            for i in 0..samples {
+                let elapsed = i as f32 / sample_rate as f32;
+                let intensity_index = (elapsed / dur_per_int) as usize;
+                let intensity_index = intensity_index.min(day.len() - 1);
+                let intensity_end = day[intensity_index];
+
+                let intensity = if intensity_index == day.len() - 1 {
+                    intensity_end
+                } else {
+                    // transition_fraction = 1.0, so transition_duration == dur_per_int
+                    let t = (elapsed - intensity_index as f32 * dur_per_int) / dur_per_int;
+                    intensity_start + (intensity_end - intensity_start) * t
+                };
+
+                intensity_start = intensity_end;
+
+                // Use wind sample rate to index into wind_data, matching Python's wind_index logic
+                let wind_index = ((i as f32 / sample_rate as f32 * wind_sample_rate) as usize) % n_wind;
+                let wind_sample = wind_data[wind_index];
+
+                let value = if intensity <= 1.0 {
+                    0.0
+                } else {
+                    wind_sample * intensity / 15.0
+                };
+
+                // Python applies +3dB via pydub (factor ~1.412)
                 output.push(value * 1.412);
             }
         }
