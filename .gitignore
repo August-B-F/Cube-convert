@@ -163,3 +163,4 @@ cython_debug/
 #.idea/
 rust-version/test_win/ffmpeg.exe
 rust-version/test_win/
+rust-version/cube convert prod/ffmpeg.exe

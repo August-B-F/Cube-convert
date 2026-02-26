@@ -22,7 +22,7 @@ fn generate_single_beat(current_bpm: f32, sample_rate: u32) -> Vec<f32> {
     let dub_freq = 55.0; 
 
     // Louder amplitude multiplier
-    let amp_mult = 1.8;
+    let amp_mult = 1.4;
 
     // 1. Generate S1 (Lub)
     for i in 0..lub_samples {
