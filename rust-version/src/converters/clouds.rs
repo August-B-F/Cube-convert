@@ -6,7 +6,7 @@ use super::{shared, CancelFlag, ProgressTx};
 
 fn list_images(dir: &Path) -> Result<Vec<PathBuf>, String> {
     let mut files: Vec<_> = fs::read_dir(dir)
-        .map_err(|e| format!("read_dir {}: {e}", dir.display()))?
+        .map_err(|e| format!("read_dir {}: {}", dir.display(), e))?
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| {
             let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
@@ -25,7 +25,6 @@ pub fn convert_clouds(
     cancel: CancelFlag,
 ) -> Result<(), String> {
     if is_folder && stitch_images {
-        // Output folder logic for stitched output
         let out_dir = file_path.join("Cube-Converted");
         let _ = fs::create_dir_all(&out_dir);
         let stem = file_path.file_name().unwrap_or_default().to_string_lossy();
@@ -43,23 +42,21 @@ pub fn convert_clouds(
         }
 
         let mut images = Vec::new();
-        // Add black image at the start
         images.push(image::RgbImage::new(750, 360));
         
         for p in &page_files {
             if cancel.load(std::sync::atomic::Ordering::Relaxed) {
                 return Err("Cancelled.".into());
             }
-            let img = image::open(p).map_err(|e| format!("open {}: {e}", p.display()))?.to_rgb8();
+            let img = image::open(p).map_err(|e| format!("open {}: {}", p.display(), e))?.to_rgb8();
             let resized = imageops::resize(&img, 750, 360, imageops::FilterType::Triangle);
             images.push(resized);
         }
 
-        // Add black image at the end
         images.push(image::RgbImage::new(750, 360));
 
         let video_dur = 12.0 * 60.0;
-        let fps = 25.0;
+        let fps = 24.0;
         let total_frames = (video_dur * fps) as usize;
         
         let args: Vec<String> = vec![
@@ -111,7 +108,7 @@ pub fn convert_clouds(
 
                 if stdin.write_all(&frame).is_err() { break; }
                 
-                if f % 250 == 0 {
+                if f % 240 == 0 {
                     let _ = tx.send(super::Progress::Update {
                         name: stem_str.clone(),
                         fraction: f as f32 / total_frames as f32,
@@ -156,7 +153,6 @@ pub fn convert_clouds(
             }
 
             let mut images = Vec::new();
-            // Add black image at the start
             images.push(image::RgbImage::new(750, 360));
 
             for p in &page_files {
@@ -164,16 +160,15 @@ pub fn convert_clouds(
                     let _ = fs::remove_dir_all(&tmp_dir);
                     return Err("Cancelled.".into());
                 }
-                let img = image::open(p).map_err(|e| format!("open {}: {e}", p.display()))?.to_rgb8();
+                let img = image::open(p).map_err(|e| format!("open {}: {}", p.display(), e))?.to_rgb8();
                 let resized = imageops::resize(&img, 750, 360, imageops::FilterType::Triangle);
                 images.push(resized);
             }
 
-            // Add black image at the end
             images.push(image::RgbImage::new(750, 360));
 
             let video_dur = 12.0 * 60.0;
-            let fps = 25.0;
+            let fps = 24.0;
             let total_frames = (video_dur * fps) as usize;
             
             let mut args: Vec<String> = vec![
@@ -230,7 +225,7 @@ pub fn convert_clouds(
 
                     if stdin.write_all(&frame).is_err() { break; }
                     
-                    if f % 250 == 0 {
+                    if f % 240 == 0 {
                         let _ = prog_tx.send(super::Progress::Update {
                             name: name.to_string(),
                             fraction: f as f32 / total_frames as f32,

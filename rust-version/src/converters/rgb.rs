@@ -48,7 +48,8 @@ pub fn convert_rgb(
             interpolated.extend(lerp_color(w[0], w[1], 3000));
         }
 
-        let num_frames = 25 * 720;
+        // Switched from 25 to 24 fps (720 seconds duration remains unchanged)
+        let num_frames = 24 * 720;
         let gradient: Vec<[u8; 3]> = (0..num_frames).map(|i| {
             let idx = (i * interpolated.len()) / num_frames;
             interpolated[idx.min(interpolated.len() - 1)]
@@ -57,7 +58,7 @@ pub fn convert_rgb(
         let mut args: Vec<String> = vec![
             "-y".into(), "-hide_banner".into(), "-loglevel".into(), "error".into(),
             "-f".into(), "rawvideo".into(), "-pix_fmt".into(), "rgb24".into(),
-            "-s".into(), "520x520".into(), "-r".into(), "25".into(),
+            "-s".into(), "520x520".into(), "-r".into(), "24".into(),
             "-i".into(), "pipe:0".into(), "-c:v".into(), "libx264".into(),
             "-preset".into(), shared::ffmpeg_preset(), "-pix_fmt".into(), "yuv420p".into(),
         ];
@@ -83,7 +84,7 @@ pub fn convert_rgb(
                 if stdin.write_all(&raw).is_err() { break; } 
                 
                 count += 1;
-                if count % 250 == 0 {
+                if count % 240 == 0 {
                     let _ = prog_tx.send(super::Progress::Update {
                         name: name.to_string(),
                         fraction: count as f32 / num_frames as f32,

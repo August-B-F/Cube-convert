@@ -47,15 +47,15 @@ pub fn convert_text(
         let frame_w = 600u32;
         let frame_h = 224u32;
         
-        let fps = 60.0f32; 
-        let speed_px_per_frame = 2u32;
+        // Switched from 60fps to 24fps
+        let fps = 24.0f32; 
+        
+        // Increased from 2px to 5px to maintain exactly 120 pixels per second scroll speed
+        let speed_px_per_frame = 5u32;
         let speed_px_per_sec = speed_px_per_frame as f32 * fps;
         
         let font_size_px = (frame_h as f32 * 0.6).round() as u32;
         
-        // FFmpeg's drawtext filter (FreeType) scales fonts based on the EM square.
-        // rusttype's Scale::uniform scales based on the unscaled ascent-descent height.
-        // To get exactly the same width measurements as FFmpeg, we adjust the scale:
         let v_unscaled = font.v_metrics_unscaled();
         let height_unscaled = v_unscaled.ascent - v_unscaled.descent;
         let units_per_em = font.units_per_em() as f32;
@@ -72,10 +72,6 @@ pub fn convert_text(
             last = Some(g.id());
         }
 
-        // The text starts at x = frame_w (fully off-screen right)
-        // It needs to travel until x = -total_text_w (fully off-screen left)
-        // Total travel distance = frame_w + total_text_w.
-        // Add a small 100px buffer (~0.8 seconds) to let it breathe before cutting.
         let total_scroll_px = total_text_w + frame_w as f32 + 100.0;
         let total_frames = (total_scroll_px / speed_px_per_frame as f32).ceil() as usize;
         let duration = total_frames as f32 / fps;
@@ -113,7 +109,8 @@ pub fn convert_text(
             "-preset".into(), "fast".into(), 
             "-crf".into(), "26".into(), 
             "-tune".into(), "animation".into(),
-            "-g".into(), "300".into(),
+            // Adjusted GOP down to 120 (which is 5 seconds of video at 24 FPS)
+            "-g".into(), "120".into(),
             "-pix_fmt".into(), "yuv420p".into(),
         ];
         
